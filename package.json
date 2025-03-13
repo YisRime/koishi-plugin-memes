@@ -2,21 +2,39 @@
   "name": "koishi-plugin-memes",
   "description": "生成各种 Meme 图，可通过预先定义的 API 或自行添加 API 生成",
   "version": "0.0.1",
+  "contributors": [
+    "Yis_Rime <yis_rime@outlook.com>"
+  ],
+  "homepage": "https://github.com/YisRime/koishi-plugin-memes",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/YisRime/koishi-plugin-memes.git"
+  },
   "main": "lib/index.js",
   "typings": "lib/index.d.ts",
   "files": [
     "lib",
     "dist"
   ],
-  "license": "MIT",
+  "license": "GPL-3.0",
   "scripts": {},
   "keywords": [
     "chatbot",
     "koishi",
-    "plugin"
+    "plugin",
+    "meme",
+    "qq",
+    "image",
+    "text",
+    "api",
+    "generator"
   ],
   "devDependencies": {},
   "peerDependencies": {
-    "koishi": "^4.18.7"
+    "koishi": "^4.18.7",
+    "axios": "^1.4.0"
+  },
+  "dependencies": {
+    "axios": "^1.4.0"
   }
 }
