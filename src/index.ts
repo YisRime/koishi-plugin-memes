@@ -26,23 +26,50 @@ function parseTarget(target: string): string | null {
 }
 
 /**
+ * 计算字符串实际显示宽度（中文/全角字符占2个宽度）
+ */
+function getStringWidth(str: string): number {
+  let width = 0;
+  for (const char of str) {
+    if (/[\u4e00-\u9fa5]|[^\x00-\xff]/.test(char)) {
+      width += 2;
+    } else {
+      width += 1;
+    }
+  }
+  return width;
+}
+
+/**
 * 显示表情包类型菜单
 */
 function showMenu(): string {
-  const ITEMS_PER_ROW = 4;
-  const ITEM_WIDTH = 12;
+  const ROW_WIDTH = 36;
 
-  let menu = '请选择要制作的表情包类型(输入序号):\n\n';
-  let row = '';
+  let menu = '使用 memes <序号> <@用户/内容> [内容] 生成指定表情\n';
+  let currentRow = [];
+  let currentWidth = 0;
 
   emoticonTypes.forEach((type, index) => {
-    const item = `${index + 1}. ${type.description}`.padEnd(ITEM_WIDTH);
-    row += item;
-    if ((index + 1) % ITEMS_PER_ROW === 0 || index === emoticonTypes.length - 1) {
-      menu += row.trimEnd() + '\n';
-      row = '';
+    const item = `${index + 1}.${type.description}`;
+    const itemWidth = getStringWidth(item);
+
+    // 如果当前行放不下这个项目，先输出当前行
+    if (currentWidth + itemWidth + (currentRow.length > 0 ? 2 : 0) > ROW_WIDTH && currentRow.length > 0) {
+      menu += currentRow.join('  ') + '\n';
+      currentRow = [];
+      currentWidth = 0;
+    }
+
+    currentRow.push(item);
+    currentWidth += itemWidth + (currentRow.length > 1 ? 2 : 0);
+
+    // 如果是最后一个项目，确保输出
+    if (index === emoticonTypes.length - 1 && currentRow.length > 0) {
+      menu += currentRow.join('  ') + '\n';
     }
   });
+
   return menu;
 }
 
@@ -64,16 +91,25 @@ async function generateImage(
     if (params.text) {
       url = url.replace(/\${text}/g, encodeURIComponent(params.text));
     }
-    const { data } = await axios.get<QMakeResponse>(url, { timeout: 8000 });
-    return data?.code === 200 ? data.data : null;
+
+    const response = await axios.get(url, {
+      timeout: 8000,
+      validateStatus: () => true,
+      responseType: 'text'
+    });
+    if (response.headers['content-type']?.includes('application/json')) {
+      try {
+        const jsonData = typeof response.data === 'string' ? JSON.parse(response.data) : response.data;
+        return jsonData?.code === 200 ? jsonData.data : null;
+      } catch (e) {
+        return url;
+      }
+    } else {
+      return url;
+    }
   } catch (error) {
     throw new Error('API请求失败: ' + error.message);
   }
-}
-
-interface QMakeResponse {
-  code: number
-  data: string
 }
 
 export function apply(ctx: Context) {
