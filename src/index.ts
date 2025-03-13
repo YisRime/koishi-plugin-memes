@@ -46,7 +46,7 @@ function getStringWidth(str: string): number {
 function showMenu(): string {
   const ROW_WIDTH = 36;
 
-  let menu = '使用 memes <序号> <@用户/内容> [内容] 生成指定表情\n';
+  let menu = '使用memes 序号 @用户 生成Meme\n';
   let currentRow = [];
   let currentWidth = 0;
 
