@@ -67,7 +67,6 @@ function parseTarget(target: string): string | null {
  * 显示表情包类型菜单，支持分页
  */
 function showMenu(emoticonTypes: EmoticonConfig[], page: number | string = 1): string {
-  const MAX_CHAR_PER_LINE = 32
   const LINES_PER_PAGE = 10
   // 处理特殊页码
   let showAll = page === 'all'
@@ -76,19 +75,48 @@ function showMenu(emoticonTypes: EmoticonConfig[], page: number | string = 1): s
   }
   // 获取所有表情类型的描述
   const descriptions = emoticonTypes.map(type => type.description.split('|')[0].trim())
+
+  /**
+   * 计算字符串的显示宽度（中文字符计2，其他字符计1）
+   */
+  const getStringDisplayWidth = (str: string): number => {
+    let width = 0
+    for (const char of str) {
+      // 使用正则匹配中文字符（包括中文标点）
+      if (/[\u4e00-\u9fa5\u3000-\u303f\uff00-\uffef]/.test(char)) {
+        width += 2
+      } else {
+        width += 1
+      }
+    }
+    return width
+  }
+
   // 按行格式化菜单项
   const formatLines = () => {
-    let lines = []
+    const lines = []
     let currentLine = ''
+    let currentWidth = 0
+    const MAX_WIDTH_PER_LINE = 36  // 每行最大显示宽度
+    const SEPARATOR = ' '          // 项目间分隔符
+    const SEPARATOR_WIDTH = 1      // 分隔符宽度
 
     for (const desc of descriptions) {
-      // 如果当前行添加这个描述会超出最大字符数，则另起一行
-      if (currentLine.length + desc.length + 2 > MAX_CHAR_PER_LINE && currentLine.length > 0) {
+      const descWidth = getStringDisplayWidth(desc)
+      // 如果加上这个描述会超出每行最大宽度，则另起一行
+      if (currentWidth + descWidth + SEPARATOR_WIDTH > MAX_WIDTH_PER_LINE && currentWidth > 0) {
         lines.push(currentLine)
         currentLine = desc
+        currentWidth = descWidth
       } else {
-        // 如果是新行就不加空格，否则加空格作为分隔
-        currentLine = currentLine.length === 0 ? desc : `${currentLine} ${desc}`
+        // 如果是新行就不加分隔符，否则加分隔符
+        if (currentLine.length === 0) {
+          currentLine = desc
+          currentWidth = descWidth
+        } else {
+          currentLine += SEPARATOR + desc
+          currentWidth += SEPARATOR_WIDTH + descWidth
+        }
       }
     }
     // 添加最后一行
