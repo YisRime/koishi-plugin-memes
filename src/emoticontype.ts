@@ -41,7 +41,7 @@ export const emoticonTypes: EmoticonConfig[] = [
     apiEndpoint: 'https://api.andeer.top/API/gif_push.php?qq=${qq}'
   },
   {
-    description: '拍',
+    description: '拍GIF',
     apiEndpoint: 'https://api.andeer.top/API/gif_pat.php?qq=${qq}'
   },
   {
@@ -57,10 +57,6 @@ export const emoticonTypes: EmoticonConfig[] = [
     apiEndpoint: 'https://api.andeer.top/API/gif_bounce.php?qq=${qq}'
   },
   {
-    description: '吃3',
-    apiEndpoint: 'https://api.andeer.top/API/img_eat2.php?qq=${qq}'
-  },
-  {
     description: '旋转',
     apiEndpoint: 'https://api.andeer.top/API/gif_whirl.php?qq=${qq}'
   },
@@ -69,20 +65,20 @@ export const emoticonTypes: EmoticonConfig[] = [
     apiEndpoint: 'https://api.andeer.top/API/gif_praise.php?qq=${qq}'
   },
   {
-    description: '敲2',
-    apiEndpoint: 'https://api.andeer.top/API/gif_knock2.php?qq=${qq}'
-  },
-  {
     description: '敲',
     apiEndpoint: 'https://api.andeer.top/API/gif_knock.php?qq=${qq}'
   },
   {
-    description: '摸鱼',
-    apiEndpoint: 'https://api.andeer.top/API/gif_fish.php?qq=${qq}'
+    description: '敲2',
+    apiEndpoint: 'https://api.andeer.top/API/gif_knock2.php?qq=${qq}'
   },
   {
     description: '摸鱼',
     apiEndpoint: 'https://api.andeer.top/API/img_fish.php?qq=${qq}'
+  },
+  {
+    description: '摸鱼GIF',
+    apiEndpoint: 'https://api.andeer.top/API/gif_fish.php?qq=${qq}'
   },
   {
     description: '打',
@@ -93,15 +89,39 @@ export const emoticonTypes: EmoticonConfig[] = [
     apiEndpoint: 'https://api.andeer.top/API/img_look.php?qq=${qq}'
   },
   {
+    description: '丢',
+    apiEndpoint: 'https://api.andeer.top/API/img_throw.php?qq=${qq}'
+  },
+  {
+    description: '丢GIF',
+    apiEndpoint: 'https://api.andeer.top/API/gif_throw.php?qq=${qq}'
+  },
+  {
     description: '丢2',
     apiEndpoint: 'https://api.andeer.top/API/gif_throw2.php?qq=${qq}'
   },
   {
-    description: '丢',
-    apiEndpoint: 'https://api.andeer.top/API/gif_throw.php?qq=${qq}'
+    description: '吃GIF',
+    apiEndpoint: 'https://api.andeer.top/API/gif_eat.php?qq=${qq}'
   },
   {
-    description: '亲亲',
+    description: '吃3',
+    apiEndpoint: 'https://api.andeer.top/API/img_eat2.php?qq=${qq}'
+  },
+  {
+    description: '可莉吃',
+    apiEndpoint: 'https://api.andeer.top/API/gif_klee_eat.php?qq=${qq}'
+  },
+  {
+    description: '亲亲|双人',
+    apiEndpoint: 'https://api.andeer.top/API/img_kiss.php?bqq=${qq}&cqq=${qq2}'
+  },
+  {
+    description: '要亲亲',
+    apiEndpoint: 'https://api.andeer.top/API/img_kiss_1.php?qq=${qq}'
+  },
+  {
+    description: '亲亲3',
     apiEndpoint: 'https://api.andeer.top/API/img_kiss_3.php?qq=${qq}'
   },
   {
@@ -141,20 +161,12 @@ export const emoticonTypes: EmoticonConfig[] = [
     apiEndpoint: 'https://api.andeer.top/API/gif_wallpaper.php?qq=${qq}'
   },
   {
-    description: '咬-胡桃',
-    apiEndpoint: 'https://api.andeer.top/API/gif_hutao_bite.php?qq=${qq}'
-  },
-  {
     description: '咬',
     apiEndpoint: 'https://api.andeer.top/API/gif_bite.php?qq=${qq}'
   },
   {
-    description: '可莉吃',
-    apiEndpoint: 'https://api.andeer.top/API/gif_klee_eat.php?qq=${qq}'
-  },
-  {
-    description: '吃',
-    apiEndpoint: 'https://api.andeer.top/API/gif_eat.php?qq=${qq}'
+    description: '胡桃咬',
+    apiEndpoint: 'https://api.andeer.top/API/gif_hutao_bite.php?qq=${qq}'
   },
   {
     description: '崇拜',
@@ -177,8 +189,8 @@ export const emoticonTypes: EmoticonConfig[] = [
     apiEndpoint: 'https://api.andeer.top/API/img_crawl.php?qq=${qq}'
   },
   {
-    description: '丢',
-    apiEndpoint: 'https://api.andeer.top/API/img_throw.php?qq=${qq}'
+    description: '爬2',
+    apiEndpoint: 'https://api.andeer.top/API/img_climb.php?qq=${qq}'
   },
   {
     description: '拍',
@@ -205,7 +217,7 @@ export const emoticonTypes: EmoticonConfig[] = [
     apiEndpoint: 'https://api.andeer.top/API/img_lsd.php?qq=${qq}'
   },
   {
-    description: '牵|双人',
+    description: '牵手|双人',
     apiEndpoint: 'https://api.andeer.top/API/img_qian.php?bqq=${qq}&cqq=${qq2}'
   },
   {
@@ -213,27 +225,15 @@ export const emoticonTypes: EmoticonConfig[] = [
     apiEndpoint: 'https://api.andeer.top/API/img_good.php?qq=${qq}'
   },
   {
-    description: '想|双人',
+    description: '想念|双人',
     apiEndpoint: 'https://api.andeer.top/API/img_miss.php?bqq=${qq}&cqq=${qq2}'
-  },
-  {
-    description: '要亲亲',
-    apiEndpoint: 'https://api.andeer.top/API/img_kiss_1.php?qq=${qq}'
-  },
-  {
-    description: '爬',
-    apiEndpoint: 'https://api.andeer.top/API/img_climb.php?qq=${qq}'
-  },
-  {
-    description: '亲亲|双人',
-    apiEndpoint: 'https://api.andeer.top/API/img_kiss.php?bqq=${qq}&cqq=${qq2}'
   },
   {
     description: '击剑|双人',
     apiEndpoint: 'https://api.andeer.top/API/gif_beat_j.php?bqq=${qq}&cqq=${qq2}'
   },
   {
-    description: '朋友说|+文字',
+    description: '朋友说|文字',
     apiEndpoint: 'https://api.andeer.top/API/img_say.php?qq=${qq}&text=${text}'
   },
   {
@@ -261,7 +261,7 @@ export const emoticonTypes: EmoticonConfig[] = [
     apiEndpoint: 'https://api.andeer.top/API/img_wife.php?bqq=${qq}&cqq=${qq2}'
   },
   {
-    description: '阿妮垭-看',
+    description: '阿妮垭看',
     apiEndpoint: 'https://api.andeer.top/API/aniyasuki.php?qq=${qq}'
   },
   {
@@ -309,12 +309,12 @@ export const emoticonTypes: EmoticonConfig[] = [
     apiEndpoint: 'https://api.andeer.top/API/bao.php?qq=${qq}'
   },
   {
-    description: '猎手1',
-    apiEndpoint: 'https://api.andeer.top/API/lieshou2.php?qq=${qq}'
-  },
-  {
     description: '猎手',
     apiEndpoint: 'https://api.andeer.top/API/lieshou.php?qq=${qq}'
+  },
+  {
+    description: '猎手2',
+    apiEndpoint: 'https://api.andeer.top/API/lieshou2.php?qq=${qq}'
   },
   {
     description: '羡慕',

@@ -46,12 +46,12 @@ function getStringWidth(str: string): number {
 function showMenu(): string {
   const ROW_WIDTH = 36;
 
-  let menu = '使用memes 序号 @用户 生成Meme\n';
+  let menu = '使用memes 表情类型 @用户 生成Meme\n';
   let currentRow = [];
   let currentWidth = 0;
 
-  emoticonTypes.forEach((type, index) => {
-    const item = `${index + 1}.${type.description}`;
+  emoticonTypes.forEach((type) => {
+    const item = type.description;
     const itemWidth = getStringWidth(item);
 
     // 如果当前行放不下这个项目，先输出当前行
@@ -65,12 +65,33 @@ function showMenu(): string {
     currentWidth += itemWidth + (currentRow.length > 1 ? 2 : 0);
 
     // 如果是最后一个项目，确保输出
-    if (index === emoticonTypes.length - 1 && currentRow.length > 0) {
+    if (currentRow.length > 0 && type === emoticonTypes[emoticonTypes.length - 1]) {
       menu += currentRow.join('  ') + '\n';
     }
   });
 
   return menu;
+}
+
+/**
+ * 搜索表情包类型
+ * @param keyword 关键词
+ * @returns 匹配的表情类型索引，如果没找到返回-1
+ */
+function searchEmoticonType(keyword: string): number {
+  if (!keyword) return -1;
+
+  // 尝试通过描述精确匹配
+  const exactMatch = emoticonTypes.findIndex(
+    type => type.description === keyword
+  );
+  if (exactMatch !== -1) return exactMatch;
+
+  // 尝试通过包含关系匹配
+  const partialMatch = emoticonTypes.findIndex(
+    type => type.description.includes(keyword)
+  );
+  return partialMatch;
 }
 
 /**
@@ -116,18 +137,23 @@ export function apply(ctx: Context) {
 
   const logger = ctx.logger('memes')
 
-  ctx.command('memes [type:number] [target:string] [extra:text]', '制作 Meme 表情包')
+  ctx.command('memes [type:text] [target:string] [extra:text]', '制作 Meme 表情包')
     .usage('选择表情类型，并输入相关参数，生成 Meme')
-    .example('memes - 显示类型菜单')
-    .example('memes 1 @用户 内容 - 生成指定表情')
+    .example('memes - 显示使用帮助')
+    .example('memes 吃 @用户 - 生成"吃"表情')
+    .example('memes 喜报 今天是周末 - 生成带文字的表情')
     .action(async ({ session }, type, target, extra) => {
-      // 显示菜单
-      if (type === undefined) return showMenu();
-      // 检查类型有效性
-      const typeIndex = Number(type) - 1;
-      if (isNaN(typeIndex) || typeIndex < 0 || typeIndex >= emoticonTypes.length) {
-        return `无效序号，请输入 1-${emoticonTypes.length} 之间的数字`;
+      // 没有参数时显示帮助
+      if (!type) {
+        return '请输入表情类型或描述，例如：memes 吃 @用户\n查看所有表情类型请使用：memes.list';
       }
+
+      // 搜索匹配的表情类型
+      const typeIndex = searchEmoticonType(type);
+      if (typeIndex === -1) {
+        return `未找到匹配的表情类型"${type}"，请使用 memes.list 查看所有可用表情`;
+      }
+
       try {
         // 获取当前表情配置
         const config = emoticonTypes[typeIndex];
@@ -168,5 +194,11 @@ export function apply(ctx: Context) {
         logger.error(error);
         return '生成表情包出错';
       }
+    });
+
+  // 添加子命令 memes.list 显示完整菜单
+  ctx.command('memes.list', '显示所有可用的表情包类型')
+    .action(() => {
+      return showMenu();
     });
 }
