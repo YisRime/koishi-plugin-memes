@@ -67,7 +67,7 @@ function parseTarget(target: string): string | null {
  * 显示表情包类型菜单，支持分页
  */
 function showMenu(emoticonTypes: EmoticonConfig[], page: number | string = 1): string {
-  const MAX_CHAR_PER_LINE = 36
+  const MAX_CHAR_PER_LINE = 32
   const LINES_PER_PAGE = 10
   // 处理特殊页码
   let showAll = page === 'all'
@@ -88,7 +88,7 @@ function showMenu(emoticonTypes: EmoticonConfig[], page: number | string = 1): s
         currentLine = desc
       } else {
         // 如果是新行就不加空格，否则加空格作为分隔
-        currentLine = currentLine.length === 0 ? desc : `${currentLine}  ${desc}`
+        currentLine = currentLine.length === 0 ? desc : `${currentLine} ${desc}`
       }
     }
     // 添加最后一行
@@ -107,10 +107,14 @@ function showMenu(emoticonTypes: EmoticonConfig[], page: number | string = 1): s
     ? allLines
     : allLines.slice((validPage - 1) * LINES_PER_PAGE, validPage * LINES_PER_PAGE)
   // 构建菜单标题和内容
-  let menu = showAll
-    ? `表情列表（共${emoticonTypes.length}项）\n`
-    : `表情列表（第${validPage}/${totalPages}页）\n`
-
+  let menu = "";
+  if (showAll) {
+    menu = `表情列表（共${emoticonTypes.length}项）\n`;
+  } else if (totalPages > 1) {
+    menu = `表情列表（第${validPage}/${totalPages}页）\n`;
+  } else {
+    menu = "表情列表\n";
+  }
   return menu + displayLines.join('\n')
 }
 
@@ -158,26 +162,32 @@ async function generateImage(config: EmoticonConfig, arg1: string, arg2: string,
 export function apply(ctx: Context, config: Config) {
   const emoticonTypes = initEmoticonTypes(ctx, config)
 
-  const memes = ctx.command('memes <type:string> [arg1:string] [arg2:string]', '制作 Meme 表情包')
+  const memes = ctx.command('memes [type:string] [arg1:string] [arg2:string]', '制作 Meme 表情包')
     .usage('选择表情类型，并输入参数生成表情包')
     .example('memes 吃 @用户 - 生成"吃"表情')
     .example('memes 喜报 文本 - 生成喜报')
     .example('memes 牵手 @用户1 @用户2 - 生成双人表情')
     .action(async ({ session }, type, arg1, arg2) => {
-      // 匹配表情类型
-      const typeIndex = emoticonTypes.findIndex(t => {
-        const descriptions = t.description.split('|')
-        return descriptions.some(desc => desc.trim() === type.trim())
-      })
-      if (typeIndex === -1) {
-        return `未找到与"${type}"匹配的表情类型`
+      let typeIndex = -1;
+      // 随机选择
+      if (!type) {
+        typeIndex = Math.floor(Math.random() * emoticonTypes.length);
+      } else {
+        // 匹配表情类型
+        typeIndex = emoticonTypes.findIndex(t => {
+          const descriptions = t.description.split('|')
+          return descriptions.some(desc => desc.trim() === type.trim())
+        });
+        if (typeIndex === -1) {
+          return `未找到与"${type}"匹配的表情类型`;
+        }
       }
       // 使用参数生成图片
       try {
         const imageUrl = await generateImage(emoticonTypes[typeIndex], arg1, arg2, session)
         return imageUrl ? h('image', { url: imageUrl }) : '生成表情包失败'
       } catch (error) {
-        return '生成表情包出错: ' + error.message
+        return '生成表情包出错：' + error.message
       }
     })
 
