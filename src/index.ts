@@ -1,204 +1,203 @@
 import { Context, Schema, h } from 'koishi'
 import axios from 'axios'
-import { emoticonTypes } from './emoticontype'
+import { emoticonTypes as defaultEmoticonTypes, EmoticonConfig } from './emoticontype'
+import fs from 'fs'
+import path from 'path'
 
 export const name = 'memes'
-export interface Config {}
-export const Config: Schema<Config> = Schema.object({})
+
+export interface Config {
+  loadExternal?: boolean
+}
+
+export const Config: Schema<Config> = Schema.object({
+  loadExternal: Schema.boolean()
+    .description('是否从文件中加载 API 配置').default(true)
+})
+
+/**
+ * 初始化表情包配置
+ */
+function initEmoticonTypes(ctx: Context, config: Config): EmoticonConfig[] {
+  const logger = ctx.logger('memes')
+  const configPath = path.resolve(ctx.baseDir, 'data', 'memes.json')
+  // 不存在则创建默认配置
+  if (!fs.existsSync(configPath)) {
+    try {
+      fs.writeFileSync(configPath, JSON.stringify(defaultEmoticonTypes, null, 2), 'utf-8')
+      logger.info(`已创建表情包配置：${configPath}`)
+      return defaultEmoticonTypes
+    } catch (e) {
+      logger.error(`创建配置文件失败：${e.message}`)
+      return defaultEmoticonTypes
+    }
+  }
+  // 加载外部配置
+  if (config.loadExternal) {
+    try {
+      const content = fs.readFileSync(configPath, 'utf-8')
+      const externalTypes = JSON.parse(content) as EmoticonConfig[]
+      logger.info(`已加载外部配置：${configPath}（共${externalTypes.length}项）`)
+      return externalTypes
+    } catch (e) {
+      logger.error(`加载外部配置失败：${e.message}`)
+      return defaultEmoticonTypes
+    }
+  }
+  return defaultEmoticonTypes
+}
 
 /**
  * 解析目标用户ID (支持@元素、@数字格式或纯数字)
- * @param target - 要解析的目标字符串，可以是纯数字、`@`元素或`@`数字格式
- * @returns 解析出的用户ID，如果解析失败则返回null
  */
 function parseTarget(target: string): string | null {
   if (!target) return null
   // 尝试解析at元素
   try {
     const atElement = h.select(h.parse(target), 'at')[0]
-    if (atElement?.attrs?.id) return atElement.attrs.id;
+    if (atElement?.attrs?.id) return atElement.attrs.id
   } catch {}
   // 尝试匹配@数字格式或纯数字
   const atMatch = target.match(/@(\d+)/)
-  const userId = atMatch ? atMatch[1] : (/^\d+$/.test(target.trim()) ? target.trim() : null);
-  // 验证ID格式：5-10位数字
-  return userId && /^\d{5,10}$/.test(userId) ? userId : null;
+  const userId = atMatch ? atMatch[1] : (/^\d+$/.test(target.trim()) ? target.trim() : null)
+  return userId && /^\d{5,10}$/.test(userId) ? userId : null
 }
 
 /**
- * 计算字符串实际显示宽度（中文/全角字符占2个宽度）
+ * 显示表情包类型菜单，支持分页
  */
-function getStringWidth(str: string): number {
-  let width = 0;
-  for (const char of str) {
-    if (/[\u4e00-\u9fa5]|[^\x00-\xff]/.test(char)) {
-      width += 2;
-    } else {
-      width += 1;
-    }
+function showMenu(emoticonTypes: EmoticonConfig[], page: number | string = 1): string {
+  const MAX_CHAR_PER_LINE = 36
+  const LINES_PER_PAGE = 10
+  // 处理特殊页码
+  let showAll = page === 'all'
+  if (typeof page === 'string') {
+    page = parseInt(page) || 1
   }
-  return width;
-}
+  // 获取所有表情类型的描述
+  const descriptions = emoticonTypes.map(type => type.description.split('|')[0].trim())
+  // 按行格式化菜单项
+  const formatLines = () => {
+    let lines = []
+    let currentLine = ''
 
-/**
-* 显示表情包类型菜单
-*/
-function showMenu(): string {
-  const ROW_WIDTH = 36;
-
-  let menu = '使用memes 表情类型 @用户 生成Meme\n';
-  let currentRow = [];
-  let currentWidth = 0;
-
-  emoticonTypes.forEach((type) => {
-    const item = type.description;
-    const itemWidth = getStringWidth(item);
-
-    // 如果当前行放不下这个项目，先输出当前行
-    if (currentWidth + itemWidth + (currentRow.length > 0 ? 2 : 0) > ROW_WIDTH && currentRow.length > 0) {
-      menu += currentRow.join('  ') + '\n';
-      currentRow = [];
-      currentWidth = 0;
+    for (const desc of descriptions) {
+      // 如果当前行添加这个描述会超出最大字符数，则另起一行
+      if (currentLine.length + desc.length + 2 > MAX_CHAR_PER_LINE && currentLine.length > 0) {
+        lines.push(currentLine)
+        currentLine = desc
+      } else {
+        // 如果是新行就不加空格，否则加空格作为分隔
+        currentLine = currentLine.length === 0 ? desc : `${currentLine}  ${desc}`
+      }
     }
-
-    currentRow.push(item);
-    currentWidth += itemWidth + (currentRow.length > 1 ? 2 : 0);
-
-    // 如果是最后一个项目，确保输出
-    if (currentRow.length > 0 && type === emoticonTypes[emoticonTypes.length - 1]) {
-      menu += currentRow.join('  ') + '\n';
+    // 添加最后一行
+    if (currentLine.length > 0) {
+      lines.push(currentLine)
     }
-  });
+    return lines
+  }
 
-  return menu;
-}
+  const allLines = formatLines()
+  const totalPages = Math.ceil(allLines.length / LINES_PER_PAGE)
+  // 确保页码有效
+  const validPage = Math.max(1, Math.min(page as number, showAll ? 1 : totalPages))
+  // 根据分页或全部显示模式获取要显示的行
+  const displayLines = showAll
+    ? allLines
+    : allLines.slice((validPage - 1) * LINES_PER_PAGE, validPage * LINES_PER_PAGE)
+  // 构建菜单标题和内容
+  let menu = showAll
+    ? `表情列表（共${emoticonTypes.length}项）\n`
+    : `表情列表（第${validPage}/${totalPages}页）\n`
 
-/**
- * 搜索表情包类型
- * @param keyword 关键词
- * @returns 匹配的表情类型索引，如果没找到返回-1
- */
-function searchEmoticonType(keyword: string): number {
-  if (!keyword) return -1;
-
-  // 尝试通过描述精确匹配
-  const exactMatch = emoticonTypes.findIndex(
-    type => type.description === keyword
-  );
-  if (exactMatch !== -1) return exactMatch;
-
-  // 尝试通过包含关系匹配
-  const partialMatch = emoticonTypes.findIndex(
-    type => type.description.includes(keyword)
-  );
-  return partialMatch;
+  return menu + displayLines.join('\n')
 }
 
 /**
  * 生成表情包图片
  */
-async function generateImage(
-  config: { apiEndpoint: string },
-  params: { qq: string, qq2: string, text: string }
-): Promise<string> {
+async function generateImage(config: EmoticonConfig, arg1: string, arg2: string, session): Promise<string> {
+  // 处理参数，解析@用户
+  const parseArg = (arg: string, defaultValue: string) => {
+    if (!arg) return defaultValue
+    const parsedId = parseTarget(arg)
+    return parsedId || arg
+  }
+  // 获取默认值和处理参数
+  const defaultArg1 = session.userId
+  const defaultArg2 = '测试文本'
+  const processedArg1 = parseArg(arg1, defaultArg1)
+  const processedArg2 = parseArg(arg2, defaultArg2)
+  // 替换参数占位符
+  let url = config.apiEndpoint
+    .replace(/\${arg1}/g, processedArg1)
+    .replace(/\${arg2}/g, processedArg2)
   try {
-    let url = config.apiEndpoint;
-    if (params.qq) {
-      url = url.replace(/\${qq}/g, params.qq);
-    }
-    if (params.qq2) {
-      url = url.replace(/\${qq2}/g, params.qq2);
-    }
-    if (params.text) {
-      url = url.replace(/\${text}/g, encodeURIComponent(params.text));
-    }
-
+    // 请求API
     const response = await axios.get(url, {
       timeout: 8000,
       validateStatus: () => true,
       responseType: 'text'
-    });
+    })
+    // 处理JSON响应
     if (response.headers['content-type']?.includes('application/json')) {
       try {
-        const jsonData = typeof response.data === 'string' ? JSON.parse(response.data) : response.data;
-        return jsonData?.code === 200 ? jsonData.data : null;
-      } catch (e) {
-        return url;
+        const jsonData = typeof response.data === 'string' ? JSON.parse(response.data) : response.data
+        return jsonData?.code === 200 ? jsonData.data : url
+      } catch {
+        return url
       }
-    } else {
-      return url;
     }
+    return url
   } catch (error) {
-    throw new Error('API请求失败: ' + error.message);
+    throw new Error(`请求失败: ${error.message}`)
   }
 }
 
-export function apply(ctx: Context) {
+export function apply(ctx: Context, config: Config) {
+  const emoticonTypes = initEmoticonTypes(ctx, config)
 
-  const logger = ctx.logger('memes')
-
-  ctx.command('memes [type:text] [target:string] [extra:text]', '制作 Meme 表情包')
-    .usage('选择表情类型，并输入相关参数，生成 Meme')
-    .example('memes - 显示使用帮助')
+  const memes = ctx.command('memes <type:string> [arg1:string] [arg2:string]', '制作 Meme 表情包')
+    .usage('选择表情类型，并输入参数生成表情包')
     .example('memes 吃 @用户 - 生成"吃"表情')
-    .example('memes 喜报 今天是周末 - 生成带文字的表情')
-    .action(async ({ session }, type, target, extra) => {
-      // 没有参数时显示帮助
-      if (!type) {
-        return '请输入表情类型或描述，例如：memes 吃 @用户\n查看所有表情类型请使用：memes.list';
-      }
-
-      // 搜索匹配的表情类型
-      const typeIndex = searchEmoticonType(type);
+    .example('memes 喜报 文本 - 生成喜报')
+    .example('memes 牵手 @用户1 @用户2 - 生成双人表情')
+    .action(async ({ session }, type, arg1, arg2) => {
+      // 匹配表情类型
+      const typeIndex = emoticonTypes.findIndex(t => {
+        const descriptions = t.description.split('|')
+        return descriptions.some(desc => desc.trim() === type.trim())
+      })
       if (typeIndex === -1) {
-        return `未找到匹配的表情类型"${type}"，请使用 memes.list 查看所有可用表情`;
+        return `未找到与"${type}"匹配的表情类型`
       }
-
+      // 使用参数生成图片
       try {
-        // 获取当前表情配置
-        const config = emoticonTypes[typeIndex];
-        const apiUrl = config.apiEndpoint;
-        // 确定API需要的参数类型
-        const needsQQ = apiUrl.includes('${qq}');
-        const needsQQ2 = apiUrl.includes('${qq2}');
-        const needsText = apiUrl.includes('${text}');
-        const isTextOnly = !needsQQ && !needsQQ2 && needsText;
-        // 根据不同情况收集参数
-        let params = {
-          qq: null,
-          qq2: null,
-          text: null
-        };
-        if (isTextOnly) {
-          // 纯文本API
-          params.text = [target, extra].filter(Boolean).join(' ') || '测试文本';
-        } else if (needsQQ) {
-          // 需要QQ号的API
-          params.qq = target ? parseTarget(target) : session.userId;
-          if (!params.qq) return '请提供有效用户';
-          if (needsQQ2 && extra) {
-            params.qq2 = parseTarget(extra) || params.qq;
-          } else if (needsText) {
-            // 如果需要文本，使用extra作为文本
-            params.text = extra || '测试文本';
-          }
-          // 回退第一个qq
-          if (needsQQ2 && !params.qq2) {
-            params.qq2 = params.qq;
-          }
-        }
-        // 生成并发送图片
-        const imageUrl = await generateImage(config, params);
-        return imageUrl ? h('image', { url: imageUrl }) : '生成表情包失败';
+        const imageUrl = await generateImage(emoticonTypes[typeIndex], arg1, arg2, session)
+        return imageUrl ? h('image', { url: imageUrl }) : '生成表情包失败'
       } catch (error) {
-        logger.error(error);
-        return '生成表情包出错';
+        return '生成表情包出错: ' + error.message
       }
-    });
+    })
 
-  // 添加子命令 memes.list 显示完整菜单
-  ctx.command('memes.list', '显示所有可用的表情包类型')
+  memes.subcommand('.list [page:string]', '显示表情包类型列表')
+    .usage('使用"all"显示全部表情类型')
+    .action(({}, page) => {
+      return showMenu(emoticonTypes, page || 1)
+    })
+
+  memes.subcommand('.reload', '重新加载配置', { authority: 3 })
     .action(() => {
-      return showMenu();
-    });
+      try {
+        // 重新加载配置并更新引用
+        const newTypes = initEmoticonTypes(ctx, config)
+        // 清空并重新填充数组
+        emoticonTypes.length = 0
+        newTypes.forEach(type => emoticonTypes.push(type))
+        return `已重新加载配置（共${emoticonTypes.length}项）`
+      } catch (error) {
+        return '重新加载配置失败：' + error.message
+      }
+    })
 }
