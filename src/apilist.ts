@@ -1,16 +1,17 @@
 /**
- * 表情包类型配置
+ * 表情API配置接口
+ * 定义了表情类型和对应的API端点
  */
-export interface EmoticonConfig {
-  description: string  // 表情描述(支持|分隔多别名)
-  apiEndpoint: string  // API地址包含参数模板
+export interface ApiConfig {
+  description: string
+  apiEndpoint: string
 }
 
 /**
- * 表情包类型配置列表
- * 这是默认的表情包配置，会在首次启动时写入data目录
+ * 默认API配置列表
+ * 首次启动时会写入data目录作为配置模板
  */
-export const emoticonTypes: EmoticonConfig[] = [
+export const apiTypes: ApiConfig[] = [
   {
     description: '好玩',
     apiEndpoint: 'https://api.andeer.top/API/img_interesting.php?qq=${arg1}'
@@ -40,7 +41,7 @@ export const emoticonTypes: EmoticonConfig[] = [
     apiEndpoint: 'https://api.andeer.top/API/gif_push.php?qq=${arg1}'
   },
   {
-    description: '拍GIF',
+    description: '拍|GIF',
     apiEndpoint: 'https://api.andeer.top/API/gif_pat.php?qq=${arg1}'
   },
   {
@@ -68,7 +69,7 @@ export const emoticonTypes: EmoticonConfig[] = [
     apiEndpoint: 'https://api.andeer.top/API/gif_knock.php?qq=${arg1}'
   },
   {
-    description: '敲2',
+    description: '敲|2',
     apiEndpoint: 'https://api.andeer.top/API/gif_knock2.php?qq=${arg1}'
   },
   {
@@ -76,7 +77,7 @@ export const emoticonTypes: EmoticonConfig[] = [
     apiEndpoint: 'https://api.andeer.top/API/img_fish.php?qq=${arg1}'
   },
   {
-    description: '摸鱼GIF',
+    description: '摸鱼|GIF',
     apiEndpoint: 'https://api.andeer.top/API/gif_fish.php?qq=${arg1}'
   },
   {
@@ -92,19 +93,19 @@ export const emoticonTypes: EmoticonConfig[] = [
     apiEndpoint: 'https://api.andeer.top/API/img_throw.php?qq=${arg1}'
   },
   {
-    description: '丢GIF',
+    description: '丢|GIF',
     apiEndpoint: 'https://api.andeer.top/API/gif_throw.php?qq=${arg1}'
   },
   {
-    description: '丢2',
+    description: '丢|2',
     apiEndpoint: 'https://api.andeer.top/API/gif_throw2.php?qq=${arg1}'
   },
   {
-    description: '吃GIF',
+    description: '吃|GIF',
     apiEndpoint: 'https://api.andeer.top/API/gif_eat.php?qq=${arg1}'
   },
   {
-    description: '吃3',
+    description: '吃|3',
     apiEndpoint: 'https://api.andeer.top/API/img_eat2.php?qq=${arg1}'
   },
   {
@@ -120,7 +121,7 @@ export const emoticonTypes: EmoticonConfig[] = [
     apiEndpoint: 'https://api.andeer.top/API/img_kiss_1.php?qq=${arg1}'
   },
   {
-    description: '亲亲3',
+    description: '亲亲|3',
     apiEndpoint: 'https://api.andeer.top/API/img_kiss_3.php?qq=${arg1}'
   },
   {
@@ -188,7 +189,7 @@ export const emoticonTypes: EmoticonConfig[] = [
     apiEndpoint: 'https://api.andeer.top/API/img_crawl.php?qq=${arg1}'
   },
   {
-    description: '爬2',
+    description: '爬|2',
     apiEndpoint: 'https://api.andeer.top/API/img_climb.php?qq=${arg1}'
   },
   {
@@ -312,7 +313,7 @@ export const emoticonTypes: EmoticonConfig[] = [
     apiEndpoint: 'https://api.andeer.top/API/lieshou.php?qq=${arg1}'
   },
   {
-    description: '猎手2',
+    description: '猎手|2',
     apiEndpoint: 'https://api.andeer.top/API/lieshou2.php?qq=${arg1}'
   },
   {
