@@ -13,12 +13,19 @@ export const Config: Schema<Config> = Schema.object({
   loadExternal: Schema.boolean()
     .description('是否从文件中加载 API 配置').default(true),
   memeGeneratorUrl: Schema.string()
-    .description('MemeGenerator API 地址').default('')
+    .description('MemeGenerator API 地址 (例如: http://localhost:3000)').default('')
 })
 
 export function apply(ctx: Context, cfg: Config) {
   // 加载表情类型
   const types = utils.loadConfig(ctx, cfg.loadExternal, defTypes)
+
+  // 检查 MemeGenerator API URL
+  if (!cfg.memeGeneratorUrl) {
+    utils.log.warn('MemeGenerator API URL 未设置，相关功能将不可用')
+  } else {
+    utils.log.info(`MemeGenerator API URL: ${cfg.memeGeneratorUrl}`)
+  }
 
   // 注册命令
   const meme = ctx.command('memes [tplId:string] [...texts:text]', '制作 Meme 表情包')
@@ -26,6 +33,10 @@ export function apply(ctx: Context, cfg: Config) {
     .example('memes drake 不用koishi 用koishi - 生成反对/支持模板')
     .example('memes list - 查看可用模板列表')
     .action(async ({ session }, tplId, ...texts) => {
+      if (!cfg.memeGeneratorUrl) {
+        return '未配置 MemeGenerator API URL，请在插件设置中配置'
+      }
+
       if (!tplId) {
         return '请提供模板ID和文本参数。使用 memes list 查看可用模板。'
       }
@@ -42,6 +53,10 @@ export function apply(ctx: Context, cfg: Config) {
   meme.subcommand('.list', '列出所有可用的模板')
     .usage('显示 MemeGenerator API 提供的所有模板列表')
     .action(async () => {
+      if (!cfg.memeGeneratorUrl) {
+        return '未配置 MemeGenerator API URL，请在插件设置中配置'
+      }
+
       try {
         const tpls = await utils.getTpls(cfg.memeGeneratorUrl)
         if (tpls.length === 0) return '没有可用的模板。'

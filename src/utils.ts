@@ -170,11 +170,29 @@ export interface MemeTemplate {
 }
 
 /**
+ * 确保 API URL 格式正确
+ */
+export function formatApiUrl(baseUrl: string): string {
+  if (!baseUrl) return '';
+  // 移除末尾的斜杠
+  let url = baseUrl.trim().replace(/\/+$/, '');
+  return url;
+}
+
+/**
  * 从 MemeGenerator API 获取模板列表
  */
 export async function getTpls(apiUrl: string): Promise<MemeTemplate[]> {
+  apiUrl = formatApiUrl(apiUrl);
   try {
-    const res = await axios.get(`${apiUrl}/templates`, { timeout: 8000 })
+    const res = await axios.get(`${apiUrl}/api/templates`, {
+      timeout: 8000,
+      validateStatus: () => true
+    })
+    if (res.status !== 200) {
+      log.warn(`获取模板列表返回状态码: ${res.status}`);
+      throw new Error(`API 返回状态码 ${res.status}`);
+    }
     return res.data && Array.isArray(res.data) ? res.data : []
   } catch (err) {
     log.error(`获取模板列表失败: ${err.message}`)
@@ -199,6 +217,7 @@ export async function getTplInfo(apiUrl: string, tplId: string): Promise<MemeTem
  * 使用 MemeGenerator API 生成表情包
  */
 export async function genMeme(apiUrl: string, tplId: string, texts: string[], session): Promise<string> {
+  apiUrl = formatApiUrl(apiUrl);
   try {
     // 处理可能的图片参数
     const processedTexts = texts.map(text => {
@@ -239,14 +258,25 @@ export async function genMeme(apiUrl: string, tplId: string, texts: string[], se
       texts: finalTexts
     }
 
-    const res = await axios.post(`${apiUrl}/generate`,
+    log.info(`发送请求到: ${apiUrl}/api/generate，模板ID: ${tplId}，文本数量: ${finalTexts.length}`);
+    const res = await axios.post(`${apiUrl}/api/generate`,
       payload,
-      { timeout: 8000, responseType: 'json' }
+      {
+        timeout: 15000,
+        responseType: 'json',
+        validateStatus: () => true
+      }
     )
+
+    if (res.status !== 200) {
+      log.warn(`API返回状态码: ${res.status}, 响应: ${JSON.stringify(res.data)}`);
+      throw new Error(`API 返回状态码 ${res.status}`);
+    }
 
     if (res.data && res.data.url) {
       return res.data.url
     } else {
+      log.warn(`API 返回的数据: ${JSON.stringify(res.data)}`);
       throw new Error('API 返回的数据格式不正确')
     }
   } catch (err) {
