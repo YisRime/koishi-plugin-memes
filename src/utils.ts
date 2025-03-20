@@ -180,107 +180,226 @@ export function formatApiUrl(baseUrl: string): string {
 }
 
 /**
- * 从 MemeGenerator API 获取模板列表
+ * 获取 meme generator API 的版本信息
  */
-export async function getTpls(apiUrl: string): Promise<MemeTemplate[]> {
+export async function getMemeVersion(apiUrl: string): Promise<string> {
   apiUrl = formatApiUrl(apiUrl);
   try {
-    const res = await axios.get(`${apiUrl}/api/templates`, {
+    const res = await axios.get(`${apiUrl}/meme/version`, {
+      timeout: 5000,
+      validateStatus: () => true
+    })
+    if (res.status !== 200) {
+      log.warn(`获取版本信息返回状态码: ${res.status}`);
+      throw new Error(`API 返回状态码 ${res.status}`);
+    }
+    return res.data || 'unknown';
+  } catch (err) {
+    log.error(`获取版本信息失败: ${err.message}`)
+    return 'unknown';
+  }
+}
+
+/**
+ * 获取所有可用的表情包键值
+ */
+export async function getMemeKeys(apiUrl: string): Promise<string[]> {
+  apiUrl = formatApiUrl(apiUrl);
+  try {
+    const res = await axios.get(`${apiUrl}/memes/keys`, {
       timeout: 8000,
       validateStatus: () => true
     })
     if (res.status !== 200) {
-      log.warn(`获取模板列表返回状态码: ${res.status}`);
+      log.warn(`获取表情包键值列表返回状态码: ${res.status}`);
       throw new Error(`API 返回状态码 ${res.status}`);
     }
-    return res.data && Array.isArray(res.data) ? res.data : []
+    return Array.isArray(res.data) ? res.data : [];
   } catch (err) {
-    log.error(`获取模板列表失败: ${err.message}`)
-    throw new Error(`获取模板列表失败: ${err.message}`)
+    log.error(`获取表情包键值列表失败: ${err.message}`)
+    return [];
   }
 }
 
 /**
- * 获取单个模板信息
+ * 获取特定表情包的信息
  */
-export async function getTplInfo(apiUrl: string, tplId: string): Promise<MemeTemplate | null> {
+export async function getMemeInfo(apiUrl: string, key: string): Promise<any> {
+  apiUrl = formatApiUrl(apiUrl);
   try {
-    const tpls = await getTpls(apiUrl)
-    return tpls.find(t => t.id === tplId) || null
+    const res = await axios.get(`${apiUrl}/memes/${key}/info`, {
+      timeout: 8000,
+      validateStatus: () => true
+    })
+    if (res.status !== 200) {
+      log.warn(`获取表情包信息返回状态码: ${res.status}`);
+      throw new Error(`API 返回状态码 ${res.status}`);
+    }
+    return res.data || null;
   } catch (err) {
-    log.error(`获取模板信息失败: ${err.message}`)
-    return null
+    log.error(`获取表情包信息失败: ${err.message}`)
+    return null;
   }
 }
 
 /**
- * 使用 MemeGenerator API 生成表情包
+ * 获取表情包预览图 URL
  */
-export async function genMeme(apiUrl: string, tplId: string, texts: string[], session): Promise<string> {
+export async function getMemePreview(apiUrl: string, key: string): Promise<string> {
+  apiUrl = formatApiUrl(apiUrl);
+  try {
+    const res = await axios.get(`${apiUrl}/memes/${key}/preview`, {
+      timeout: 8000,
+      validateStatus: () => true
+    })
+    if (res.status !== 200) {
+      log.warn(`获取表情包预览返回状态码: ${res.status}`);
+      throw new Error(`API 返回状态码 ${res.status}`);
+    }
+    return res.data || '';
+  } catch (err) {
+    log.error(`获取表情包预览失败: ${err.message}`)
+    return '';
+  }
+}
+
+/**
+ * 渲染表情包列表
+ */
+export async function renderMemeList(apiUrl: string, memeKeys: string[], textTemplate: string = '{keywords}', addCategoryIcon: boolean = true): Promise<string> {
+  apiUrl = formatApiUrl(apiUrl);
+  try {
+    const memeList = memeKeys.map(key => ({
+      meme_key: key,
+      disabled: false,
+      labels: []
+    }));
+
+    const payload = {
+      meme_list: memeList,
+      text_template: textTemplate,
+      add_category_icon: addCategoryIcon
+    };
+
+    log.info(`发送渲染列表请求到: ${apiUrl}/memes/render_list，共${memeList.length}个表情`);
+
+    const res = await axios.post(`${apiUrl}/memes/render_list`,
+      payload,
+      {
+        timeout: 30000,
+        responseType: 'json',
+        validateStatus: () => true
+      }
+    );
+
+    if (res.status !== 200) {
+      log.warn(`渲染表情列表返回状态码: ${res.status}, 响应: ${JSON.stringify(res.data)}`);
+      throw new Error(`API 返回状态码 ${res.status}`);
+    }
+
+    return res.data || '';
+  } catch (err) {
+    log.error(`渲染表情列表失败: ${err.message}`);
+    throw new Error(`渲染表情列表失败: ${err.message}`);
+  }
+}
+
+/**
+ * 生成表情包
+ */
+export async function genMeme(apiUrl: string, memeKey: string, texts: string[], session): Promise<string> {
   apiUrl = formatApiUrl(apiUrl);
   try {
     // 处理可能的图片参数
     const processedTexts = texts.map(text => {
       // 检查是否为图片链接
       if (text && (text.startsWith('http') && /\.(jpg|jpeg|png|gif|webp)$/i.test(text))) {
-        return text
+        return text;
       }
 
       // 尝试解析图片元素
       try {
-        const imgElements = h.select(h.parse(text), 'image')
+        const imgElements = h.select(h.parse(text), 'image');
         if (imgElements.length > 0 && imgElements[0].attrs?.url) {
-          return imgElements[0].attrs.url
+          return imgElements[0].attrs.url;
         }
       } catch {}
 
-      return text
-    })
+      return text;
+    });
 
-    // 获取模板信息
-    const tplInfo = await getTplInfo(apiUrl, tplId)
-    const finalTexts = [...processedTexts]
+    // 获取表情包信息以了解参数数量
+    const memeInfo = await getMemeInfo(apiUrl, memeKey);
+    const requiredParams = memeInfo?.params?.length || 1;
+    const finalTexts = [...processedTexts];
 
     // 如果参数不足且用户有头像，使用用户头像填充
-    if (tplInfo && finalTexts.length < tplInfo.text_count && session?.user?.avatar) {
-      while (finalTexts.length < tplInfo.text_count) {
-        finalTexts.push(session.user.avatar)
+    if (finalTexts.length < requiredParams && session?.user?.avatar) {
+      while (finalTexts.length < requiredParams) {
+        finalTexts.push(session.user.avatar);
       }
     }
 
-    // 如果没有任何参数且用户有头像，添加用户头像作为第一个参数
-    if (finalTexts.length === 0 && session?.user?.avatar) {
-      finalTexts.push(session.user.avatar)
-    }
+    // 构建 API 端点
+    const endpoint = `${apiUrl}/memes/${memeKey}`;
 
-    const payload = {
-      template_id: tplId,
-      texts: finalTexts
-    }
+    // 构建查询参数
+    const params = {};
+    finalTexts.forEach((text, index) => {
+      params[`text${index}`] = text;
+    });
 
-    log.info(`发送请求到: ${apiUrl}/api/generate，模板ID: ${tplId}，文本数量: ${finalTexts.length}`);
-    const res = await axios.post(`${apiUrl}/api/generate`,
-      payload,
-      {
-        timeout: 15000,
-        responseType: 'json',
-        validateStatus: () => true
-      }
-    )
+    log.info(`发送生成请求到: ${endpoint}，表情键值: ${memeKey}，参数数量: ${finalTexts.length}`);
+
+    const res = await axios.get(endpoint, {
+      params: params,
+      timeout: 15000,
+      responseType: 'json',
+      validateStatus: () => true
+    });
 
     if (res.status !== 200) {
       log.warn(`API返回状态码: ${res.status}, 响应: ${JSON.stringify(res.data)}`);
       throw new Error(`API 返回状态码 ${res.status}`);
     }
 
-    if (res.data && res.data.url) {
-      return res.data.url
+    // 根据实际 API 返回格式处理响应
+    if (typeof res.data === 'string' && res.data.startsWith('http')) {
+      return res.data;
+    } else if (res.data && res.data.url) {
+      return res.data.url;
     } else {
       log.warn(`API 返回的数据: ${JSON.stringify(res.data)}`);
-      throw new Error('API 返回的数据格式不正确')
+      throw new Error('API 返回的数据格式不正确');
     }
   } catch (err) {
-    log.error(`生成表情包失败: ${err.message}`)
-    throw new Error(`生成表情包失败: ${err.message}`)
+    log.error(`生成表情包失败: ${err.message}`);
+    throw new Error(`生成表情包失败: ${err.message}`);
+  }
+}
+
+/**
+ * 获取表情包模板列表
+ */
+export async function getTpls(apiUrl: string): Promise<MemeTemplate[]> {
+  apiUrl = formatApiUrl(apiUrl);
+  try {
+    // 获取所有键值
+    const keys = await getMemeKeys(apiUrl);
+
+    // 将键值转换为模板格式
+    const templates = await Promise.all(keys.map(async (key) => {
+      const info = await getMemeInfo(apiUrl, key);
+      return {
+        id: key,
+        name: info?.name || key,
+        text_count: info?.params?.length || 1
+      };
+    }));
+
+    return templates;
+  } catch (err) {
+    log.error(`获取模板列表失败: ${err.message}`);
+    throw new Error(`获取模板列表失败: ${err.message}`);
   }
 }
