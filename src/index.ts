@@ -2,7 +2,6 @@ import { Context, Schema, h, Logger } from 'koishi'
 import { apiTypes as defaultApiTypes } from './apilist'
 import { ExternalMemeAPI } from './external'
 import axios from 'axios'
-import FormData from 'form-data'
 
 export const name = 'memes'
 
@@ -93,26 +92,26 @@ function getUserAvatar(session: any): string | null {
 }
 
 /**
- * 创建表情生成请求的FormData
+ * 创建表情生成请求的数据对象
  */
-function createMemeFormData(texts: string[], images: string[], args: any): FormData {
-  const formData = new FormData()
+function createMemeRequestData(texts: string[], images: string[], args: any): any {
+  const requestData: any = {}
 
   // 添加文本和图片数组
   if (texts.length > 0) {
-    texts.forEach(text => formData.append('texts', text))
+    requestData.texts = texts
   }
 
   if (images.length > 0) {
-    images.forEach(img => formData.append('images', img))
+    requestData.images = images
   }
 
   // 添加额外参数
   if (args) {
-    formData.append('args', typeof args === 'string' ? args : JSON.stringify(args))
+    requestData.args = typeof args === 'string' ? args : args
   }
 
-  return formData
+  return requestData
 }
 
 /**
@@ -172,14 +171,14 @@ export function apply(ctx: Context, cfg: Config) {
           }
         }
 
-        // 4. 创建并发送POST请求
-        const formData = createMemeFormData(processedTexts, images, templateInfo?.args)
+        // 4. 创建并发送POST请求 - 使用JSON而非FormData
+        const requestData = createMemeRequestData(processedTexts, images, templateInfo?.args)
 
         logger.info(`请求模板: ${templateId}, 参数: 文本${processedTexts.length}个, 图片${images.length}个`)
 
-        const response = await axios.post(`${apiUrl}/memes/${templateId}/`, formData, {
+        const response = await axios.post(`${apiUrl}/memes/${templateId}/`, requestData, {
           headers: {
-            ...formData.getHeaders(),
+            'Content-Type': 'application/json',
             'Accept': 'application/json'
           },
           timeout: 15000,
