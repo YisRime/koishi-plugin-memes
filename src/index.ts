@@ -1,7 +1,6 @@
 import { Context, Schema, h, Logger } from 'koishi'
-import { apiTypes as defaultApiTypes } from './apilist'
-import { ExternalMemeAPI } from './external'
-import { MemeMaker } from './makeimg'
+import { MemeAPI } from './api'
+import { MemeMaker } from './make'
 import axios from 'axios'
 
 export const name = 'memes'
@@ -10,22 +9,21 @@ export const inject = {optional: ['puppeteer']}
 export const logger = new Logger('memes')
 
 export interface Config {
-  loadExt?: boolean
-  genUrl?: string
+  loadApi: boolean
+  genUrl: string
 }
 
 export const Config: Schema<Config> = Schema.object({
-  loadExt: Schema.boolean()
-    .description('加载本地外部 API 配置').default(false),
+  loadApi: Schema.boolean()
+    .description('开启自定义 API 生成功能').default(false),
   genUrl: Schema.string()
-    .description('MemeGenerator API 配置').default('http://localhost:2233')
+    .description('MemeGenerator API 配置').default('http://localhost:2233'),
 })
 
 /**
  * 解析目标用户ID
  */
-export function parseTargetId(arg: string, defaultValue: string): string {
-  if (!arg) return defaultValue
+export function parseTarget(arg: string): string {
   // 尝试解析at元素
   try {
     const atElement = h.select(h.parse(arg), 'at')[0]
@@ -43,750 +41,515 @@ export function parseTargetId(arg: string, defaultValue: string): string {
 }
 
 /**
- * 解析文本和图片
- * @param texts 用户输入的文本
- * @returns 处理后的文本和图片URL数组
- */
-function parseTextsAndImages(texts: string[]): { processedTexts: string[], images: string[] } {
-  const processedTexts: string[] = []
-  const images: string[] = []
-  texts.forEach(text => {
-    if (text?.startsWith('http') && /\.(jpg|jpeg|png|gif|webp)$/i.test(text)) {
-      images.push(text)
-    } else {
-      try {
-        const imageElements = h.select(h.parse(text), 'image')
-        if (imageElements[0]?.attrs?.url) {
-          images.push(imageElements[0].attrs.url)
-        } else {
-          processedTexts.push(text)
-        }
-      } catch {
-        processedTexts.push(text)
-      }
-    }
-  })
-  return { processedTexts, images }
-}
-
-/**
  * 获取用户头像URL
- * @param session 会话信息
- * @returns 头像URL或null
  */
-function getUserAvatar(session: any): string | null {
-  if (session.user?.avatar) {
-    return session.user.avatar
+export async function getUserAvatar(session: any, userId?: string): Promise<string> {
+  const targetId = userId || session.userId;
+  // 优先使用会话用户自己的头像
+  if (targetId === session.userId && session.user?.avatar) {
+    return session.user.avatar;
   }
-  return `https://q1.qlogo.cn/g?b=qq&nk=${session.userId}&s=640`
+  // 默认返回QQ头像
+  return `https://q1.qlogo.cn/g?b=qq&nk=${targetId}&s=640`;
 }
 
 /**
- * 创建表情生成请求的数据对象
- * @param texts 文本参数数组
- * @param images 图片URL数组
- * @param args 额外参数
- * @returns 请求数据对象
+ * 自动撤回消息
  */
-async function createMemeRequestData(
-  texts: string[],
-  images: string[],
-  args: any,
-  useFormData: boolean = false
-): Promise<any> {
-  if (!useFormData) {
-    // 使用 JSON 格式（application/json）
-    const requestData: any = {}
-    // 添加文本和图片数组
-    if (texts.length > 0) {
-      requestData.texts = texts
-    }
-    if (images.length > 0) {
-      requestData.images = images
-    }
-    // 添加额外参数
-    if (args) {
-      requestData.args = typeof args === 'string' ? args : JSON.stringify(args)
-    }
-    return requestData
-  } else {
-    // 使用 FormData 格式（multipart/form-data）
-    const formData = new FormData()
-
-    // 添加文本参数
-    texts.forEach(text => {
-      formData.append('texts', text)
-    })
-
-    // 添加图片参数
+export async function autoRecall(session: any, message: any, delay: number = 10000) {
+  if (!message || !session.bot?.deleteMessage) return
+  setTimeout(async () => {
     try {
-      for (let i = 0; i < images.length; i++) {
-        const imageUrl = images[i]
+      await session.bot.deleteMessage(session.channelId, message.id)
+    } catch (e) {
+      logger.debug(`撤回消息失败: ${e}`)
+    }
+  }, delay)
+}
+
+/**
+ * 发送临时错误消息
+ */
+async function sendTempError(session: any, message: string): Promise<null> {
+  const msg = await session.send(message);
+  autoRecall(session, msg);
+  return null;
+}
+
+/**
+ * 通用API请求函数
+ */
+async function apiRequest<T = any>(url: string, options: {
+  method?: 'get' | 'post',
+  data?: any,
+  formData?: FormData,
+  responseType?: 'json' | 'arraybuffer',
+  timeout?: number
+} = {}): Promise<T> {
+  const {
+    method = 'get',
+    data,
+    formData,
+    responseType = 'json',
+    timeout = 8000
+  } = options;
+  try {
+    const response = await axios({
+      url,
+      method,
+      data: formData || data,
+      headers: formData ? { 'Accept': 'image/*,application/json' } : undefined,
+      responseType: responseType === 'arraybuffer' ? 'arraybuffer' : 'json',
+      timeout,
+      validateStatus: () => true
+    });
+    // 处理非成功状态码
+    if (response.status !== 200) {
+      if (responseType === 'arraybuffer') {
         try {
-          // 如果是 URL，获取图片内容
-          const response = await axios.get(imageUrl, {
-            responseType: 'arraybuffer',
-            timeout: 8000
-          })
-
-          // 从 URL 中推断文件名和类型
-          const urlParts = imageUrl.split('/')
-          const fileName = urlParts[urlParts.length - 1] || `image_${i}.jpg`
-          const contentType = response.headers['content-type'] || 'image/jpeg'
-
-          // 创建文件对象
-          const blob = new Blob([response.data], { type: contentType })
-          formData.append('images', blob, fileName)
-        } catch (err) {
-          // 如果获取失败，直接传递 URL
-          formData.append('images', imageUrl)
+          const errText = Buffer.from(response.data).toString('utf-8');
+          const errJson = JSON.parse(errText);
+          throw new Error(errJson.error || errJson.message || `HTTP状态码 ${response.status}`);
+        } catch (e) {
+          if (e instanceof SyntaxError) {
+            throw new Error(`HTTP状态码 ${response.status}`);
+          }
+          throw e;
         }
+      } else {
+        throw new Error(response.data?.error || response.data?.message || `HTTP状态码 ${response.status}`);
       }
-    } catch (err) {
-      logger.error(`处理图片失败: ${err.message}`)
-      // 如果处理失败，仍然添加原始URL
-      images.forEach(url => formData.append('images', url))
     }
+    return response.data as T;
+  } catch (e) {
+    throw new Error(`API请求失败: ${e.message}`);
+  }
+}
 
-    // 添加额外参数
-    if (args) {
-      formData.append('args', typeof args === 'string' ? args : JSON.stringify(args))
+/**
+ * 从URL获取图片Blob
+ */
+async function getImageBlob(url: string): Promise<Blob> {
+  try {
+    const response = await axios.get(url, {
+      responseType: 'arraybuffer',
+      timeout: 8000
+    });
+    const buffer = Buffer.from(response.data);
+    return new Blob([buffer], { type: response.headers['content-type'] || 'image/png' });
+  } catch (e) {
+    throw new Error(`获取图片失败: ${e.message}`);
+  }
+}
+
+/**
+ * 检查数值是否在范围内并格式化范围显示
+ */
+function checkAndFormatRange(value: number, min?: number, max?: number): { valid: boolean, display: string } {
+  const valid = (min == null || value >= min) && (max == null || value <= max);
+  let display = '';
+  if (min === max) display = `${min}`;
+  else if (min != null && max != null) display = `${min}-${max}`;
+  else if (min != null) display = `至少${min}`;
+  else if (max != null) display = `最多${max}`;
+  return { valid, display };
+}
+
+/**
+ * 从文本中分割参数
+ */
+function splitArgString(text: string): string[] {
+  const matched = text.match(/[^\s"']+|"([^"]*)"|'([^']*)'/g)
+  if (!matched) return []
+  return matched.map(v => v.replace(/^["']|["']$/g, ''))
+}
+
+/**
+ * 处理命令参数并提取图片和文本
+ */
+async function processArgs(session: any, args: h[]) {
+  const imageInfos: Array<{ src: string } | { userId: string }> = [];
+  const texts: string[] = [];
+  // 添加引用消息中的图片
+  if (session.quote?.elements) {
+    const processElement = (e: h) => {
+      if (e.children?.length) {
+        for (const child of e.children) processElement(child);
+      }
+      if (e.type === 'img' && e.attrs.src) {
+        imageInfos.push({ src: e.attrs.src });
+      }
+    };
+    for (const element of session.quote.elements) {
+      processElement(element);
     }
+  }
+  // 处理参数中的图片和文本
+  const textBuffer: string[] = [];
+  const resolveBuffer = () => {
+    if (!textBuffer.length) return;
+    const text = textBuffer.join('');
+    // 检查文本中是否有 <at id="xxx"/> 格式的标签
+    const atRegex = /<at\s+id="(\d+)"\s*\/>/g;
+    let match;
+    let lastIndex = 0;
+    let hasAtTag = false;
+    // 查找所有 at 标签
+    while ((match = atRegex.exec(text)) !== null) {
+      hasAtTag = true;
+      // 处理 at 标签前的文本
+      if (match.index > lastIndex) {
+        const segment = text.substring(lastIndex, match.index);
+        const segmentTexts = splitArgString(segment).filter(v => {
+          if (v.startsWith('-u')) {
+            imageInfos.push({ userId: v.slice(2) });
+            return false;
+          }
+          if (v.startsWith('@')) {
+            imageInfos.push({ userId: parseTarget(v) });
+            return false;
+          }
+          return true;
+        });
+        texts.push(...segmentTexts);
+      }
+      // 处理 at 标签
+      imageInfos.push({ userId: match[1] });
+      lastIndex = match.index + match[0].length;
+    }
+    // 如果没有找到 at 标签，或者处理完最后一个 at 标签后还有文本
+    if (!hasAtTag || lastIndex < text.length) {
+      const remainingText = hasAtTag ? text.substring(lastIndex) : text;
+      const bufferTexts = splitArgString(remainingText).filter(v => {
+        if (v.startsWith('-u')) {
+          imageInfos.push({ userId: v.slice(2) });
+          return false;
+        }
+        if (v.startsWith('@')) {
+          imageInfos.push({ userId: parseTarget(v) });
+          return false;
+        }
+        return true;
+      });
+      texts.push(...bufferTexts);
+    }
+    textBuffer.length = 0;
+  };
+  const processElement = (e: h) => {
+    if (e.children?.length) {
+      for (const child of e.children) processElement(child);
+    }
+    if (e.type === 'text') {
+      if (e.attrs.content) textBuffer.push(e.attrs.content);
+      return;
+    }
+    resolveBuffer();
+    if (e.type === 'img' && e.attrs.src) {
+      imageInfos.push({ src: e.attrs.src });
+    } else if (e.type === 'at' && e.attrs.id) {
+      imageInfos.push({ userId: e.attrs.id });
+    }
+  };
+  for (const element of args) {
+    processElement(element);
+  }
+  resolveBuffer();
+  return { imageInfos, texts };
+}
 
-    return formData
+/**
+ * 处理模板参数并验证
+ */
+async function processTemplateParameters(session: any, key: string, args: h[], apiUrl: string) {
+  try {
+    // 获取模板信息
+    const templateInfo = await apiRequest(`${apiUrl}/memes/${key}/info`);
+    const paramsType = templateInfo.params_type || {};
+    const {
+      min_images: minImages = 0,
+      max_images: maxImages = 0,
+      min_texts: minTexts = 0,
+      max_texts: maxTexts = 0,
+      default_texts: defaultTexts = []
+    } = paramsType;
+    // 解析参数
+    const hArgs = args.map(arg => typeof arg === 'string' ? h('text', { content: arg }) : arg);
+    const { imageInfos, texts } = await processArgs(session, hArgs);
+    // 使用发送者头像
+    let processedImageInfos = [...imageInfos];
+    const autoUseAvatar = !!(
+      (!imageInfos.length && minImages === 1) ||
+      (imageInfos.length && imageInfos.length + 1 === minImages)
+    );
+    if (autoUseAvatar) {
+      processedImageInfos.unshift({ userId: session.userId });
+    }
+    // 使用默认文本
+    let processedTexts = [...texts];
+    if (!texts.length) {
+      processedTexts.push(...defaultTexts);
+    }
+    // 验证参数数量
+    const imagesCheck = checkAndFormatRange(processedImageInfos.length, minImages, maxImages);
+    if (!imagesCheck.valid) {
+      return sendTempError(session, `图片提供(${processedImageInfos.length}/${imagesCheck.display})张`);
+    }
+    const textsCheck = checkAndFormatRange(processedTexts.length, minTexts, maxTexts);
+    if (!textsCheck.valid) {
+      return sendTempError(session, `文本提供(${processedTexts.length}/${textsCheck.display})条`);
+    }
+    // 处理图片和用户信息
+    const images: Blob[] = [];
+    const userInfos: any[] = [];
+    for (const info of processedImageInfos) {
+      try {
+        if ('src' in info) {
+          const blob = await getImageBlob(info.src);
+          images.push(blob);
+          userInfos.push({});
+        } else if ('userId' in info) {
+          const avatarUrl = await getUserAvatar(session, info.userId);
+          const blob = await getImageBlob(avatarUrl);
+          images.push(blob);
+          userInfos.push({ name: info.userId });
+        }
+      } catch (e) {
+        throw new Error(`获取图片失败: ${e.message}`);
+      }
+    }
+    return { templateInfo, images, texts: processedTexts, userInfos };
+  } catch (e) {
+    throw new Error(`处理模板参数失败: ${e.message}`);
+  }
+}
+
+/**
+ * 生成表情包
+ */
+async function generateMeme(apiUrl: string, key: string, images: Blob[], texts: string[], userInfos: any[]) {
+  const formData = new FormData();
+  // 添加文本和图片
+  texts.forEach(text => formData.append('texts', text));
+  images.forEach(img => formData.append('images', img));
+  // 添加其他参数
+  formData.append('args', JSON.stringify({ user_infos: userInfos }));
+  try {
+    // 请求生成表情包
+    return await apiRequest<Buffer>(`${apiUrl}/memes/${key}/`, {
+      method: 'post',
+      formData,
+      responseType: 'arraybuffer',
+      timeout: 10000
+    });
+  } catch (e) {
+    throw new Error(`生成表情失败: ${e.message}`);
   }
 }
 
 /**
  * 插件主函数
  */
-export function apply(ctx: Context, cfg: Config) {
-  const apiUrl = !cfg.genUrl ? '' : cfg.genUrl.trim().replace(/\/+$/, '')
-  const externalApi = new ExternalMemeAPI(ctx, cfg.loadExt, defaultApiTypes, logger)
-  const memeMaker = new MemeMaker(ctx, logger)
-  // 检查API连接
-  axios.get(`${apiUrl}/meme/version`, { timeout: 10000, validateStatus: () => true })
-    .then(response => logger.info(response.status === 200 ? '连接 API 成功' : `无法连接: ${apiUrl}`))
-    .catch(() => logger.info(`无法连接: ${apiUrl}`))
+export function apply(ctx: Context, config: Config) {
+  const apiUrl = !config.genUrl ? '' : config.genUrl.trim().replace(/\/+$/, '')
+  const memeMaker = new MemeMaker(ctx)
 
-  const meme = ctx.command('memes [templateId:string] [...texts:text]', '制作 Meme 表情')
-    .usage('示例: memes drake 不学习 学习')
-    .example('memes drake 不用koishi 用koishi - 生成对比模板')
-    .action(async ({ session }, templateId, ...texts) => {
-      if (!templateId) return '请提供模板ID和文本参数'
-      try {
-        // 处理参数
-        const { processedTexts, images } = parseTextsAndImages(texts)
-
-        // 获取模板信息
-        let templateInfo
-        let needsImage = false
-        let needsText = false
-        let defaultTexts = []
-        let argsType = null
-
-        try {
-          const infoResponse = await axios.get(`${apiUrl}/memes/${templateId}/info`, {
-            timeout: 8000,
-            validateStatus: () => true
-          })
-
-          if (infoResponse.status === 200) {
-            templateInfo = typeof infoResponse.data === 'string'
-              ? JSON.parse(infoResponse.data)
-              : infoResponse.data
-
-            // 分析参数需求
-            if (templateInfo?.params_type) {
-              const pt = templateInfo.params_type
-              needsImage = (pt.min_images > 0)
-              needsText = (pt.min_texts > 0)
-              argsType = pt.args_type
-
-              // 收集默认文本
-              if (pt.default_texts && pt.default_texts.length > 0) {
-                defaultTexts = [...pt.default_texts]
-              }
-            } else if (templateInfo?.params) {
-              // 兼容旧版参数格式
-              needsImage = templateInfo.params.some(p => p.type === 'image')
-              needsText = templateInfo.params.some(p => p.type === 'text')
-            } else {
-              // 默认假设
-              needsText = true
-            }
-          }
-        } catch (err) {
-          logger.warn(`模板信息获取失败: ${err.message}`)
-          // 默认假设
-          needsText = true
-        }
-
-        // 智能添加参数
-        let requestTexts = [...processedTexts]
-        let requestImages = [...images]
-
-        // 如果没有提供文本但模板需要文本，添加默认文本
-        if (requestTexts.length === 0 && needsText && defaultTexts.length > 0) {
-          requestTexts = [...defaultTexts]
-          logger.info(`使用默认文本: ${defaultTexts.join(', ')}`)
-        }
-
-        // 如果需要图片且没有提供图片，添加用户头像
-        if (requestImages.length === 0 && needsImage) {
-          const avatarUrl = getUserAvatar(session)
-          if (avatarUrl) {
-            requestImages.push(avatarUrl)
-            logger.info(`添加用户头像: ${avatarUrl.substring(0, 50)}...`)
-          }
-        }
-
-        // 确定是否使用 FormData
-        const useFormData = requestImages.length > 0
-
-        // 创建请求数据
-        const requestData = await createMemeRequestData(
-          requestTexts,
-          requestImages,
-          argsType,
-          useFormData
-        )
-
-        logger.info(`请求模板: ${templateId}, 参数: 文本${requestTexts.length}个, 图片${requestImages.length}个, 格式: ${useFormData ? 'FormData' : 'JSON'}`)
-
-        // 准备请求头
-        const headers = useFormData
-          ? {
-              'Accept': 'image/*,application/json'
-            }
-          : {
-              'Content-Type': 'application/json',
-              'Accept': 'image/*,application/json'
-            }
-
-        // 发送请求
-        const response = await axios.post(`${apiUrl}/memes/${templateId}/`, requestData, {
-          headers,
-          timeout: 15000,
-          responseType: 'arraybuffer',
-          validateStatus: () => true
-        })
-
-        // 处理响应
-        if (response.status !== 200) {
-          throw new Error(`状态码 ${response.status}`)
-        }
-
-        // 检查Content-Type
-        const contentType = response.headers['content-type'] || ''
-
-        // 处理响应结果
-        if (contentType.startsWith('image/')) {
-          // 图像类型的响应
-          const buffer = Buffer.from(response.data)
-          const base64 = buffer.toString('base64')
-          const dataUrl = `data:${contentType};base64,${base64}`
-          return h('image', { url: dataUrl })
-        } else {
-          // 其他类型的响应
-          try {
-            // 尝试解析为文本
-            const textData = Buffer.from(response.data).toString('utf-8')
-
-            // 判断是否是JSON
-            if (contentType.includes('application/json') || textData.trim().startsWith('{')) {
-              try {
-                const jsonData = JSON.parse(textData)
-
-                // 判断是否为URL
-                if (typeof jsonData === 'string' && jsonData.startsWith('http')) {
-                  return h('image', { url: jsonData })
-                } else if (jsonData?.url) {
-                  return h('image', { url: jsonData.url })
-                }
-              } catch {}
-            }
-
-            // 检查是否是base64编码的图片或URL
-            if (textData.startsWith('data:image')) {
-              return h('image', { url: textData })
-            } else if (textData.startsWith('http')) {
-              return h('image', { url: textData })
-            }
-
-            // 无法识别的响应
-            logger.warn(`API返回格式异常: ${textData.substring(0, 100)}${textData.length > 100 ? '...' : ''}`)
-            throw new Error('API返回格式错误')
-          } catch (err) {
-            logger.error(`解析响应失败: ${err.message}`)
-            throw new Error(`解析响应失败: ${err.message}`)
-          }
-        }
-      } catch (err) {
-        logger.error(`生成失败: ${err.message}`, err.stack)
-        return `生成失败: ${err.message}`
+  const meme = ctx.command('memes [key:string] [...texts:text]', '制作表情包')
+    .usage('输入类型并补充对应参数来生成对应表情')
+    .example('memes eat - 生成"吃"表情')
+    .action(async ({ session }, key, ...args) => {
+      if (!key) {
+        return sendTempError(session, '请提供模板ID和文本参数');
       }
-    })
-  meme.subcommand('.list [page:string]', '列出模板列表')
-    .usage('使用"all"显示全部，或数字查看指定页码')
-    .action(async ({}, page) => {
       try {
-        // 使用 /memes/keys 端点获取模板列表
-        const response = await axios.get(`${apiUrl}/memes/keys`, {
-          timeout: 8000,
-          validateStatus: () => true
-        });
+        // 处理模板参数
+        const hArgs = args.map(arg => h('text', { content: arg }));
+        const result = await processTemplateParameters(session, key, hArgs, apiUrl);
+        if (!result) return;
+        const { images, texts, userInfos } = result;
+        // 生成表情包
+        const imageBuffer = await generateMeme(apiUrl, key, images, texts, userInfos);
+        // 返回图片
+        const base64 = Buffer.from(imageBuffer).toString('base64');
+        const dataUrl = `data:image/png;base64,${base64}`;
+        return h('image', { url: dataUrl });
+      } catch (e) {
+        logger.error(`生成表情出错: ${e.message}`);
+        return sendTempError(session, `生成表情出错: ${e.message}`);
+      }
+    });
 
-        if (response.status !== 200) {
-          return `获取模板列表失败: 状态码 ${response.status}`;
-        }
-
-        // 提取模板键名
-        const keys = Array.isArray(response.data) ? response.data : [];
-        if (keys.length === 0) {
-          return '无可用模板';
-        }
-
-        // 将键名转换为简单的模板对象
-        const templates = keys.map(key => ({
-          id: key,
-          name: key
-        }));
-
-        logger.info(`成功获取${templates.length}个模板`);
-
+  meme.subcommand('.list [page:string]', '列出可用模板列表')
+    .usage('输入页码查看列表或使用"all"查看所有模板')
+    .action(async ({ session }, page) => {
+      try {
+        const keys = await apiRequest<string[]>(`${apiUrl}/memes/keys`);
         // 分页处理
-        const ITEMS_PER_PAGE = 20; // 增加每页显示数量
+        const ITEMS_PER_PAGE = 10;
         const showAll = page === 'all';
         const pageNum = typeof page === 'string' ? (parseInt(page) || 1) : (page || 1);
-        const totalPages = Math.ceil(templates.length / ITEMS_PER_PAGE);
+        const totalPages = Math.ceil(keys.length / ITEMS_PER_PAGE);
         const validPage = Math.max(1, Math.min(pageNum, totalPages));
-
-        // 显示逻辑
-        const displayTemplates = showAll
-          ? templates
-          : templates.slice((validPage - 1) * ITEMS_PER_PAGE, validPage * ITEMS_PER_PAGE);
-
-        let result = '';
-
-        // 添加头部信息
-        if (showAll) {
-          result += `全部表情模板（共${templates.length}项）\n`;
-        } else if (totalPages > 1) {
-          result += `表情模板（第${validPage}/${totalPages}页，共${templates.length}项）\n`;
-        } else {
-          result += `表情模板（共${templates.length}项）\n`;
-        }
-
-        // 格式化模板信息 - 简单展示ID
-        result += displayTemplates.map(t => t.id).join('\n');
-
-        // 添加页脚信息
-        if (!showAll) {
-          result += `\n\n使用方法：`;
-          result += `\n- .list all - 查看全部模板`;
-          result += `\n- .list <页码> - 查看指定页，当前共${totalPages}页`;
-          result += `\n- .test info <模板ID> - 查看模板详细信息`;
-        }
-
+        const pageKeys = showAll ? keys : keys.slice((validPage - 1) * ITEMS_PER_PAGE, validPage * ITEMS_PER_PAGE);
+        // 获取当前页模板详情
+        const templates = await Promise.all(pageKeys.map(async (key) => {
+          try {
+            const info = await apiRequest(`${apiUrl}/memes/${key}/info`);
+            // 获取关键词和标签
+            let keywords = info.keywords ? (Array.isArray(info.keywords) ? info.keywords : [info.keywords]) : [];
+            let imgReq = '';
+            let textReq = '';
+            let tags = info.tags && Array.isArray(info.tags) ? info.tags : [];
+            // 获取参数需求
+            const pt = info.params_type || {};
+            if (pt.min_images === pt.max_images) {
+              imgReq = pt.min_images > 0 ? `图片${pt.min_images}` : '';
+            } else {
+              imgReq = pt.min_images > 0 || pt.max_images > 0 ? `图片${pt.min_images}-${pt.max_images}` : '';
+            }
+            if (pt.min_texts === pt.max_texts) {
+              textReq = pt.min_texts > 0 ? `文本${pt.min_texts}` : '';
+            } else {
+              textReq = pt.min_texts > 0 || pt.max_texts > 0 ? `文本${pt.min_texts}-${pt.max_texts}` : '';
+            }
+            return {
+              id: key,
+              keywords,
+              imgReq,
+              textReq,
+              tags
+            };
+          } catch (err) {
+            return { id: key, keywords: [], imgReq: '', textReq: '', tags: [] };
+          }
+        }));
+        // 格式化模板信息
+        const header = showAll
+          ? `表情模板列表（共${keys.length}项）\n`
+          : totalPages > 1
+            ? `表情模板列表（${validPage}/${totalPages}页）\n`
+            : "表情模板列表\n";
+        const result = header + templates.map(t => {
+          let line = `${t.id}`;
+          if (t.keywords && t.keywords.length > 0) {
+            line += `|${t.keywords.join(',')}`;
+          }
+          // 显示参数需求和标签
+          if (t.imgReq || t.textReq) {
+            const reqParts = [];
+            if (t.imgReq) reqParts.push(t.imgReq);
+            if (t.textReq) reqParts.push(t.textReq);
+            if (reqParts.length > 0) {
+              line += ` [${reqParts.join('/')}]`;
+            }
+          }
+          if (t.tags && t.tags.length > 0) {
+            line += ` #${t.tags.join(' #')}`;
+          }
+          return line;
+        }).join('\n');
         return result;
       } catch (err) {
-        logger.error(`获取模板列表失败: ${err.message}`, err.stack);
-        return `获取失败: ${err.message}`;
+        return sendTempError(session, `获取失败: ${err.message}`);
       }
     });
 
-  // 新增.info命令
-  meme.subcommand('.info [key:string]', '查看特定模板的详细信息')
-    .usage('例如: .info drake - 查看drake模板的信息')
-    .example('.info scroll - 查看scroll模板的详细信息')
-    .action(async ({}, key) => {
-      try {
-        if (!key) return '请提供模板ID';
-
-        // 获取模板信息
-        const response = await axios.get(`${apiUrl}/memes/${key}/info`, {
-          timeout: 8000,
-          validateStatus: () => true,
-        });
-
-        if (response.status !== 200) {
-          return `获取模板信息失败: 状态码 ${response.status}`;
-        }
-
-        // 解析模板信息
-        let info;
-        try {
-          if (typeof response.data === 'string') {
-            info = JSON.parse(response.data);
-          } else {
-            info = response.data;
-          }
-        } catch (e) {
-          return `模板 "${key}" 信息解析失败: ${e.message}`;
-        }
-
-        // 确保info是对象
-        if (!info || typeof info !== 'object') {
-          return `模板 "${key}" 信息格式不正确`;
-        }
-
-        // 精简信息输出
-        let result = `模板 "${key}" 信息:\n`;
-
-        // 添加基本属性
-        if (info.keywords && info.keywords.length) {
-          const keywords = Array.isArray(info.keywords) ? info.keywords.join(', ') : info.keywords;
-          result += `- 关键词: ${keywords}\n`;
-        }
-
-        // 专注处理 params_type 格式
-        if (info.params_type) {
-          const pt = info.params_type;
-          result += `- 图片参数: 最少${pt.min_images || 0}个, 最多${pt.max_images || '无限制'}个\n`;
-          result += `- 文本参数: 最少${pt.min_texts || 0}个, 最多${pt.max_texts || '无限制'}个\n`;
-
-          // 显示默认文本
-          if (pt.default_texts && pt.default_texts.length > 0) {
-            result += `- 默认文本: ${pt.default_texts.join(' | ')}\n`;
-          }
-        }
-
-        // 显示标签
-        if (info.tags && info.tags.length) {
-          result += `- 标签: ${info.tags.join(', ')}\n`;
-        }
-
-        // 显示快捷方式
-        if (info.shortcuts && info.shortcuts.length) {
-          result += `- 快捷方式: ${info.shortcuts.join(', ')}\n`;
-        }
-
-        // 添加使用示例
-        result += `\n使用示例: memes ${key}${info.params_type?.default_texts ? ' ' + info.params_type.default_texts[0] : ''}`;
-
-        // 添加预览提示
-        result += `\n查看预览: .test preview ${key}`;
-
-        return result;
-      } catch (err) {
-        logger.error(`获取模板信息失败: ${err.message}`, err.stack);
-        return `获取失败: ${err.message}`;
+  // 查看模板详情
+  meme.subcommand('.info [key:string]', '获取模板详细信息')
+    .usage('查看指定表情模板的详细信息')
+    .example('memes.info play - 查看"play"模板的详细信息')
+    .action(async ({ session }, key) => {
+      if (!key) {
+        return sendTempError(session, '请提供模板ID');
       }
-    });
-
-  // 添加API测试命令
-  meme.subcommand('.test [endpoint:string] [key:string]', '测试 Meme API 接口')
-    .usage('可用测试项: keys, info, preview, post')
-    .example('.test keys - 测试获取所有模板键名')
-    .example('.test info drake - 测试获取特定模板信息')
-    .example('.test preview drake - 测试获取特定模板预览')
-    .example('.test post 5000choyen 标题 内容 - 测试POST请求生成表情')
-    .action(async ({ session }, endpoint = 'keys', key = '', ...params) => {
       try {
-        if (!apiUrl) return '未配置API地址';
-
-        // 日志记录测试请求
-        logger.info(`开始测试API: ${endpoint} ${key}`);
-
-        switch (endpoint.toLowerCase()) {
-          case 'keys': {
-            // 测试 /memes/keys 端点
-            const response = await axios.get(`${apiUrl}/memes/keys`, {
-              timeout: 8000,
-              validateStatus: () => true
-            });
-
-            if (response.status !== 200) {
-              return `测试失败: 状态码 ${response.status}`;
+        const info = await apiRequest(`${apiUrl}/memes/${key}/info`);
+        const pt = info.params_type || {};
+        const keywords = Array.isArray(info.keywords) ? info.keywords : [info.keywords].filter(Boolean);
+        const lines = [`模板"${key}"详细信息:`];
+        // 基本信息
+        if (keywords.length) lines.push(`关键词: ${keywords.join(', ')}`);
+        if (info.tags?.length) lines.push(`标签: ${info.tags.join(', ')}`);
+        // 参数需求
+        lines.push('需要参数:');
+        lines.push(`- 图片: ${pt.min_images || 0}${pt.max_images !== pt.min_images ? `-${pt.max_images}` : ''}张`);
+        lines.push(`- 文本: ${pt.min_texts || 0}${pt.max_texts !== pt.min_texts ? `-${pt.max_texts}` : ''}条`);
+        if (pt.default_texts?.length) lines.push(`- 默认文本: ${pt.default_texts.join(', ')}`);
+        // 其他参数
+        if (pt.args_type?.args_model?.properties) {
+          lines.push('其他参数:');
+          const properties = pt.args_type.args_model.properties;
+          const definitions = pt.args_type.args_model.$defs || {};
+          for (const key in properties) {
+            const prop = properties[key];
+            // 构建参数描述
+            let typeStr = prop.type || '';
+            if (prop.type === 'array' && prop.items?.$ref) {
+              const refTypeName = prop.items.$ref.replace('#/$defs/', '').split('/')[0];
+              typeStr = `${prop.type}<${refTypeName}>`;
             }
-
-            const keys = Array.isArray(response.data) ? response.data : [];
-            return `成功获取模板列表，共${keys.length}个: ${keys.slice(0, 10).join(', ')}${keys.length > 10 ? '...' : ''}`;
-          }
-
-          case 'info': {
-            // 测试 /memes/{key}/info 端点
-            if (!key) return '请提供模板ID';
-
-            const response = await axios.get(`${apiUrl}/memes/${key}/info`, {
-              timeout: 8000,
-              validateStatus: () => true,
-            });
-
-            if (response.status !== 200) {
-              return `获取模板信息失败: 状态码 ${response.status}`;
-            }
-
-            // 记录原始响应内容以便调试
-            const rawResponse = typeof response.data === 'string'
-              ? response.data.substring(0, 300)
-              : JSON.stringify(response.data).substring(0, 300);
-            logger.info(`模板 "${key}" 原始信息: ${rawResponse}`);
-
-            let info;
-            // 处理可能是字符串的响应
-            if (typeof response.data === 'string') {
-              try {
-                info = JSON.parse(response.data);
-              } catch (e) {
-                // 不是JSON，尝试直接使用字符串
-                return `模板 "${key}" 信息:\n- 原始响应: ${response.data.substring(0, 500)}`;
-              }
-            } else {
-              info = response.data;
-            }
-
-            // 确保info是对象
-            if (!info || typeof info !== 'object') {
-              return `模板 "${key}" 信息:\n- 无法解析的信息格式`;
-            }
-
-            // 格式化输出模板信息
-            let result = `模板 "${key}" 信息:\n`;
-
-            // 处理基本属性
-            if (info.key) result += `- 模板ID: ${info.key}\n`;
-            if (info.name) result += `- 名称: ${info.name}\n`;
-            if (info.description) result += `- 描述: ${info.description}\n`;
-            if (info.keywords && info.keywords.length) {
-              result += `- 关键词: ${Array.isArray(info.keywords) ? info.keywords.join(', ') : info.keywords}\n`;
-            }
-
-            // 专注处理 params_type 格式
-            if (info.params_type) {
-              const pt = info.params_type;
-              result += `- 图片参数: 最少${pt.min_images || 0}个, 最多${pt.max_images || '无限制'}个\n`;
-              result += `- 文本参数: 最少${pt.min_texts || 0}个, 最多${pt.max_texts || '无限制'}个\n`;
-
-              // 显示默认文本
-              if (pt.default_texts && pt.default_texts.length > 0) {
-                result += `- 默认文本: ${pt.default_texts.join(' | ')}\n`;
-              }
-
-              // 显示args_type信息
-              if (pt.args_type) {
-                result += `- 参数类型: ${JSON.stringify(pt.args_type)}\n`;
-              }
-            }
-
-            // 处理其他属性
-            if (info.tags && info.tags.length) {
-              result += `- 标签: ${info.tags.join(', ')}\n`;
-            }
-            if (info.shortcuts && info.shortcuts.length) {
-              result += `- 快捷方式: ${info.shortcuts.join(', ')}\n`;
-            }
-            if (info.date_created || info.date_modified) {
-              result += `- 创建日期: ${info.date_created || '未知'}\n`;
-              result += `- 修改日期: ${info.date_modified || '未知'}\n`;
-            }
-
-            return result;
-          }
-
-          case 'preview': {
-            // 测试 /memes/{key}/preview 端点
-            if (!key) return '请提供模板ID';
-
-            const response = await axios.get(`${apiUrl}/memes/${key}/preview`, {
-              timeout: 10000,
-              responseType: 'arraybuffer',
-              validateStatus: () => true
-            });
-
-            if (response.status !== 200) {
-              return `获取预览图失败: 状态码 ${response.status}`;
-            }
-
-            // 转换为base64并返回图片
-            const buffer = Buffer.from(response.data, 'binary');
-            const base64 = buffer.toString('base64');
-            const contentType = response.headers['content-type'] || 'image/png';
-            const dataUrl = `data:${contentType};base64,${base64}`;
-
-            return h('image', { url: dataUrl });
-          }
-
-          case 'post': {
-            // 测试 POST 请求生成表情
-            if (!key) return '请提供模板ID';
-
-            // 解析参数
-            const { processedTexts, images } = parseTextsAndImages(params);
-
-            // 首先尝试获取模板信息，以确定所需参数类型
-            let templateInfo;
-            let needsImage = false;
-            let needsText = false;
-            let defaultTexts = [];
-            let argsType = null;
-
-            try {
-              const infoResponse = await axios.get(`${apiUrl}/memes/${key}/info`, {
-                timeout: 8000,
-                validateStatus: () => true
-              });
-
-              if (infoResponse.status === 200) {
-                const info = typeof infoResponse.data === 'string'
-                  ? JSON.parse(infoResponse.data)
-                  : infoResponse.data;
-
-                if (info && typeof info === 'object') {
-                  templateInfo = info;
-
-                  // 专注处理 params_type 格式
-                  if (info.params_type) {
-                    const pt = info.params_type;
-                    needsImage = (pt.min_images > 0);
-                    needsText = (pt.min_texts > 0);
-                    argsType = pt.args_type;
-
-                    // 收集默认文本
-                    if (pt.default_texts && pt.default_texts.length > 0) {
-                      defaultTexts = [...pt.default_texts];
-                    }
-
-                    logger.info(`模板 "${key}" 参数需求: 图片=${needsImage}, 文本=${needsText}, 默认文本=${defaultTexts.join(', ')}`);
-                  } else {
-                    // 无法确定参数需求，使用保守估计
-                    logger.warn(`模板 "${key}" 未提供 params_type 信息，使用保守估计`);
-                    needsText = true; // 默认假设需要文本
-                  }
+            lines.push(`- ${key}${typeStr ? ` (${typeStr})` : ''}${prop.default !== undefined ? ` 默认值: ${JSON.stringify(prop.default)}` : ''}${prop.description ? ` - ${prop.description}` : ''}`);
+            // 处理嵌套属性
+            if (prop.items?.$ref) {
+              const refTypeName = prop.items.$ref.replace('#/$defs/', '').split('/')[0];
+              const refObj = definitions[refTypeName];
+              if (refObj?.properties) {
+                for (const subKey in refObj.properties) {
+                  const subProp = refObj.properties[subKey];
+                  let subDesc = `  - ${subKey}`;
+                  if (subProp.type) subDesc += ` (${subProp.type})`;
+                  if (subProp.default !== undefined) subDesc += ` 默认值: ${JSON.stringify(subProp.default)}`;
+                  if (subProp.description) subDesc += ` - ${subProp.description}`;
+                  if (subProp.enum?.length) subDesc += ` [可选值: ${subProp.enum.join(', ')}]`;
+                  lines.push(subDesc);
                 }
-              }
-            } catch (err) {
-              logger.warn(`无法获取模板信息: ${err.message}`);
-              // 无法获取模板信息，使用默认行为
-              needsText = true; // 默认假设需要文本
-            }
-
-            // 智能添加参数
-            let requestTexts = [...processedTexts];
-            let requestImages = [...images];
-
-            // 如果没有提供文本但模板需要文本，添加默认文本
-            if (requestTexts.length === 0 && needsText) {
-              if (defaultTexts.length > 0) {
-                requestTexts = [...defaultTexts];
-                logger.info(`使用默认文本: ${defaultTexts.join(', ')}`);
-              } else {
-                requestTexts = ['示例文本'];
-                logger.info('添加示例文本');
-              }
-            }
-
-            // 只有在需要图片且没有提供图片时，才添加用户头像
-            if (requestImages.length === 0 && needsImage) {
-              const avatarUrl = getUserAvatar(session);
-              if (avatarUrl) {
-                requestImages.push(avatarUrl);
-                logger.info(`添加用户头像: ${avatarUrl.substring(0, 50)}...`);
-              }
-            }
-
-            // 确定是否使用 FormData
-            const useFormData = requestImages.length > 0;
-
-            // 创建请求数据
-            const requestData = await createMemeRequestData(
-              requestTexts,
-              requestImages,
-              argsType,
-              useFormData
-            );
-
-            logger.info(`POST测试: ${key}, 参数: 文本${requestTexts.length}个, 图片${requestImages.length}个, 格式: ${useFormData ? 'FormData' : 'JSON'}`);
-
-            // 准备请求头
-            const headers = useFormData
-              ? {
-                  'Accept': 'image/*,application/json'
-                }
-              : {
-                  'Content-Type': 'application/json',
-                  'Accept': 'image/*,application/json'
-                };
-
-            // 发送POST请求
-            const response = await axios.post(`${apiUrl}/memes/${key}/`, requestData, {
-              headers,
-              timeout: 15000,
-              responseType: 'arraybuffer',
-              validateStatus: () => true
-            });
-
-            if (response.status !== 200) {
-              return `生成失败: 状态码 ${response.status}`;
-            }
-
-            // 检查Content-Type
-            const contentType = response.headers['content-type'] || '';
-
-            // 处理响应结果
-            if (contentType.startsWith('image/')) {
-              // 对于图像类型的响应，直接转换为base64
-              const buffer = Buffer.from(response.data);
-              const base64 = buffer.toString('base64');
-              const dataUrl = `data:${contentType};base64,${base64}`;
-              return h('image', { url: dataUrl });
-            } else {
-              // 对于JSON或文本响应，尝试解析
-              try {
-                // 转换二进制响应为文本
-                const textData = Buffer.from(response.data).toString('utf-8');
-
-                // 如果是JSON格式
-                if (contentType.includes('application/json') || textData.trim().startsWith('{')) {
-                  const jsonData = JSON.parse(textData);
-
-                  // 判断是否为URL或base64
-                  if (typeof jsonData === 'string' && jsonData.startsWith('http')) {
-                    return h('image', { url: jsonData });
-                  } else if (jsonData?.url) {
-                    return h('image', { url: jsonData.url });
-                  } else {
-                    return `生成成功，但返回格式不是直接图片: ${textData.substring(0, 100)}${textData.length > 100 ? '...' : ''}`;
-                  }
-                }
-
-                // 检查是否是base64编码的图片
-                if (textData.startsWith('data:image')) {
-                  return h('image', { url: textData });
-                }
-
-                // 检查是否是URL
-                if (textData.startsWith('http') && (
-                    textData.includes('.jpg') ||
-                    textData.includes('.png') ||
-                    textData.includes('.gif') ||
-                    textData.includes('.webp')
-                )) {
-                  return h('image', { url: textData });
-                }
-
-                // 无法识别的响应
-                logger.warn(`API返回格式无法识别: ${textData.substring(0, 100)}${textData.length > 100 ? '...' : ''}`);
-                return `生成成功，但无法解析返回结果。Content-Type: ${contentType}`;
-              } catch (err) {
-                logger.error(`解析响应失败: ${err.message}`);
-                return `生成成功，但解析响应失败: ${err.message}`;
               }
             }
           }
-
-          default:
-            return `未知的测试端点: ${endpoint}\n可用测试项: keys, info, preview, post`;
         }
+        // 命令行参数
+        if (pt.args_type?.parser_options?.length) {
+          lines.push('命令行参数:');
+          pt.args_type.parser_options.forEach(opt => {
+            const names = opt.names.join(', ');
+            const argInfo = opt.args?.length ?
+              opt.args.map(arg => {
+                let argDesc = arg.name;
+                if (arg.value) argDesc += `:${arg.value}`;
+                if (arg.default !== null && arg.default !== undefined) argDesc += `=${arg.default}`;
+                return argDesc;
+              }).join(' ') : '';
+            lines.push(`- ${names} ${argInfo}${opt.help_text ? ` - ${opt.help_text}` : ''}`);
+          });
+        }
+        // 参数示例
+        if (pt.args_type?.args_examples?.length) {
+          lines.push('参数示例:');
+          pt.args_type.args_examples.forEach((example, i) => {
+            lines.push(`- 示例${i+1}: ${JSON.stringify(example)}`);
+          });
+        }
+        // 快捷指令信息
+        if (info.shortcuts?.length) {
+          lines.push('快捷指令:');
+          info.shortcuts.forEach(shortcut => {
+            lines.push(`- ${shortcut.humanized || shortcut.key}${shortcut.args?.length ? ` (参数: ${shortcut.args.join(' ')})` : ''}`);
+          });
+        }
+        // 时间信息
+        if (info.date_created || info.date_modified) {
+          lines.push(`创建时间: ${info.date_created}\n修改时间: ${info.date_modified}`);
+        }
+        return lines.join('\n');
       } catch (err) {
-        logger.error(`API测试失败: ${err.message}`, err.stack);
-        return `测试失败: ${err.message}`;
+        return sendTempError(session, `获取模板信息失败: ${err.message}`);
       }
     });
 
   // 注册图片生成相关命令
   memeMaker.registerCommands(meme);
-  // 注册外部API的子命令
-  externalApi.registerCommands(meme);
+  // 初始化并注册外部API命令
+  if (config.loadApi) {
+    const externalApi = new MemeAPI(ctx, logger)
+    externalApi.registerCommands(meme);
+  }
 }

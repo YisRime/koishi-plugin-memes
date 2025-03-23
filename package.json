@@ -1,6 +1,6 @@
 {
   "name": "koishi-plugin-memes",
-  "description": "通过 API 生成 Meme 表情包，可自行配置 API 以支持不同 Meme 生成",
+  "description": "生成 Meme 表情包，支持 MemeGenerator 和任意 API 接口",
   "version": "0.1.13",
   "contributors": [
     "Yis_Rime <yis_rime@outlook.com>"
@@ -23,11 +23,10 @@
     "koishi",
     "plugin",
     "meme",
-    "qq",
-    "image",
-    "text",
     "api",
-    "generator"
+    "generator",
+    "meme-generator",
+    "memes"
   ],
   "devDependencies": {
     "koishi-plugin-puppeteer": "^3.5.2"
