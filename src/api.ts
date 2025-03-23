@@ -31,7 +31,7 @@ export class MemeAPI {
   constructor(ctx: Context, logger: Logger) {
     this.ctx = ctx
     this.logger = logger
-    this.configPath = path.resolve(this.ctx.baseDir, 'data', 'memes.json')
+    this.configPath = path.resolve(this.ctx.baseDir, 'data', 'memes-api.json')
     this.loadConfig()
   }
 
