@@ -23,6 +23,8 @@
 - `memes [key] [...texts]` - 使用MemeGenerator API生成表情
 - `memes.list [page]` - 列出可用模板列表(可用"all"参数查看全部)
 - `memes.info [key]` - 获取模板详细信息
+- `memes.search <keyword>` - 搜索表情模板
+- `memes.refresh` - 刷新表情模板缓存
 
 ### 内置模板
 
