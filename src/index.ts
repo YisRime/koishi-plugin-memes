@@ -13,16 +13,13 @@ export const logger = new Logger('memes')
 export interface Config {
   loadApi: boolean
   genUrl: string
-  cacheEnabled: boolean
 }
 
 export const Config: Schema<Config> = Schema.object({
   loadApi: Schema.boolean()
     .description('开启自定义 API 生成功能').default(false),
   genUrl: Schema.string()
-    .description('MemeGenerator API 配置').default('http://localhost:2233'),
-  cacheEnabled: Schema.boolean()
-    .description('启用表情模板缓存').default(true)
+    .description('MemeGenerator API 配置').default('http://localhost:2233')
 })
 
 // 表情模板信息接口
@@ -261,7 +258,6 @@ function checkAndFormatRange(value: number, min?: number, max?: number): { valid
   const valid = (min == null || value >= min) && (max == null || value <= max);
   let display = '';
   if (min === max) display = `${min}`;
-  else if (min != null && max != null) display = `${min}-${max}`;
   else if (min != null) display = `至少${min}`;
   else if (max != null) display = `最多${max}`;
   return { valid, display };
@@ -277,11 +273,57 @@ function splitArgString(text: string): string[] {
 }
 
 /**
- * 处理命令参数并提取图片和文本
+ * 处理特定模板的参数
+ */
+function processTemplateOptions(templateInfo: MemeInfo, options: Record<string, string>): Record<string, any> {
+  const result: Record<string, any> = {};
+  const paramsType = templateInfo.params_type || {};
+  // 处理参数模型中定义的属性
+  if (paramsType.args_type?.args_model?.properties) {
+    const properties = paramsType.args_type.args_model.properties;
+    for (const key in properties) {
+      const prop = properties[key];
+      if (key === 'user_infos') continue;
+      // 检查是否在命令选项中提供了该参数
+      if (options[key] !== undefined) {
+        const value = options[key];
+        // 根据属性类型进行转换
+        if (prop.type === 'integer' || prop.type === 'number') {
+          result[key] = Number(value);
+        } else if (prop.type === 'boolean') {
+          result[key] = value === 'true';
+        } else {
+          result[key] = value;
+        }
+      } else if (prop.default !== undefined) {
+        // 使用默认值
+        result[key] = prop.default;
+      }
+    }
+  }
+  return result;
+}
+
+/**
+ * 从文本中提取选项并返回清理后的文本
+ */
+function extractOptionsFromText(text: string): { cleanText: string, options: Record<string, string> } {
+  const options: Record<string, string> = {};
+  // 提取形如 "-option=value" 或 "-option" 的选项
+  const cleanText = text.replace(/-([a-zA-Z0-9_]+)(?:=([^\s]+))?/g, (match, key, value) => {
+    options[key] = value || 'true';
+    return '';
+  }).trim();
+  return { cleanText, options };
+}
+
+/**
+ * 处理命令参数并提取图片、文本和选项
  */
 async function processArgs(session: any, args: h[]) {
   const imageInfos: Array<{ src: string } | { userId: string }> = [];
   const texts: string[] = [];
+  let options: Record<string, string> = {};
   // 添加引用消息中的图片
   if (session.quote?.elements) {
     const processElement = (e: h) => {
@@ -301,6 +343,9 @@ async function processArgs(session: any, args: h[]) {
   const resolveBuffer = () => {
     if (!textBuffer.length) return;
     const text = textBuffer.join('');
+    // 提取选项
+    const { options: extractedOptions } = extractOptionsFromText(text);
+    Object.assign(options, extractedOptions);
     // 检查文本中是否有 <at id="xxx"/> 格式的标签
     const atRegex = /<at\s+id="(\d+)"\s*\/>/g;
     let match;
@@ -366,7 +411,7 @@ async function processArgs(session: any, args: h[]) {
     processElement(element);
   }
   resolveBuffer();
-  return { imageInfos, texts };
+  return { imageInfos, texts, options };
 }
 
 /**
@@ -392,7 +437,7 @@ async function processTemplateParameters(session: any, key: string, args: h[], a
     } = paramsType;
     // 解析参数
     const hArgs = args.map(arg => typeof arg === 'string' ? h('text', { content: arg }) : arg);
-    const { imageInfos, texts } = await processArgs(session, hArgs);
+    const { imageInfos, texts, options } = await processArgs(session, hArgs);
     // 使用发送者头像
     let processedImageInfos = [...imageInfos];
     const autoUseAvatar = !!(
@@ -435,7 +480,9 @@ async function processTemplateParameters(session: any, key: string, args: h[], a
         throw new Error(`获取图片失败：${e.message}`);
       }
     }
-    return { templateInfo, images, texts: processedTexts, userInfos };
+    // 处理模板特定参数
+    const templateOptions = processTemplateOptions(templateInfo, options);
+    return { templateInfo, images, texts: processedTexts, userInfos, templateOptions };
   } catch (e) {
     throw new Error(`处理模板参数失败：${e.message}`);
   }
@@ -444,13 +491,18 @@ async function processTemplateParameters(session: any, key: string, args: h[], a
 /**
  * 生成表情包
  */
-async function generateMeme(apiUrl: string, key: string, images: Blob[], texts: string[], userInfos: any[]) {
+async function generateMeme(apiUrl: string, key: string, images: Blob[], texts: string[], userInfos: any[], templateOptions: Record<string, any> = {}) {
   const formData = new FormData();
   // 添加文本和图片
   texts.forEach(text => formData.append('texts', text));
   images.forEach(img => formData.append('images', img));
+  // 合并用户信息和模板特定参数
+  const args = {
+    user_infos: userInfos,
+    ...templateOptions
+  };
   // 添加其他参数
-  formData.append('args', JSON.stringify({ user_infos: userInfos }));
+  formData.append('args', JSON.stringify(args));
   try {
     // 请求生成表情包
     return await apiRequest<Buffer>(`${apiUrl}/memes/${key}/`, {
@@ -472,7 +524,7 @@ export function apply(ctx: Context, config: Config) {
   const memeMaker = new MemeMaker(ctx)
   // 初始化缓存
   async function initCache() {
-    if (!apiUrl || !config.cacheEnabled) return
+    if (!apiUrl) return
     // 加载本地缓存
     memeCache = await loadCache(ctx)
     logger.info(`已加载缓存文件：${memeCache.length}项`)
@@ -486,7 +538,7 @@ export function apply(ctx: Context, config: Config) {
 
   const meme = ctx.command('memes [key:string] [...texts:text]', '制作表情包')
     .usage('输入类型并补充对应参数来生成对应表情')
-    .example('memes eat - 生成"吃"表情')
+    .example('memes ba_say -character=1 -position=right 你好 - 生成"心奈"说话的表情')
     .action(async ({ session }, key, ...args) => {
       if (!key) {
         return sendTempError(session, '请提供模板ID和文本参数');
@@ -496,9 +548,9 @@ export function apply(ctx: Context, config: Config) {
         const hArgs = args.map(arg => h('text', { content: arg }));
         const result = await processTemplateParameters(session, key, hArgs, apiUrl);
         if (!result) return;
-        const { images, texts, userInfos } = result;
+        const { images, texts, userInfos, templateOptions } = result;
         // 生成表情包
-        const imageBuffer = await generateMeme(apiUrl, key, images, texts, userInfos);
+        const imageBuffer = await generateMeme(apiUrl, key, images, texts, userInfos, templateOptions);
         // 返回图片
         const base64 = Buffer.from(imageBuffer).toString('base64');
         const dataUrl = `data:image/png;base64,${base64}`;
@@ -514,7 +566,7 @@ export function apply(ctx: Context, config: Config) {
     .action(async ({ session }, page) => {
       try {
         let keys: string[];
-        if (config.cacheEnabled && memeCache.length > 0) {
+        if (memeCache.length > 0) {
           keys = memeCache.map(t => t.id);
         } else {
           keys = await apiRequest<string[]>(`${apiUrl}/memes/keys`);
@@ -619,7 +671,7 @@ export function apply(ctx: Context, config: Config) {
 
   meme.subcommand('.info [key:string]', '获取模板详细信息')
     .usage('查看指定表情模板的详细信息')
-    .example('memes.info play - 查看"play"模板的详细信息')
+    .example('memes.info ba_say - 查看"ba_say"模板的详细信息')
     .action(async ({ session }, key) => {
       if (!key) {
         return sendTempError(session, '请提供模板ID');
@@ -657,7 +709,6 @@ export function apply(ctx: Context, config: Config) {
               const refTypeName = prop.items.$ref.replace('#/$defs/', '').split('/')[0];
               typeStr = `${prop.type}<${refTypeName}>`;
             }
-            lines.push(`- ${key}${typeStr ? ` (${typeStr})` : ''}${prop.default !== undefined ? ` 默认值: ${JSON.stringify(prop.default)}` : ''}${prop.description ? ` - ${prop.description}` : ''}`);
             // 处理嵌套属性
             if (prop.items?.$ref) {
               const refTypeName = prop.items.$ref.replace('#/$defs/', '').split('/')[0];
@@ -722,7 +773,7 @@ export function apply(ctx: Context, config: Config) {
         return sendTempError(session, '请提供搜索关键词');
       }
       try {
-        if (config.cacheEnabled && memeCache.length === 0) {
+        if (memeCache.length === 0) {
           await refreshCache(ctx, apiUrl);
         }
         const results = memeCache.filter(template =>
