@@ -74,8 +74,9 @@ export class MemeAPI {
    */
   registerCommands(meme: Command) {
     const api = meme.subcommand('.api [type:string] [arg1:string] [arg2:string]', '使用自定义API生成表情')
-      .usage('输入类型并补充对应参数来生成对应表情')
+      .usage('输入类型并补充对应参数来生成对应表情\n可使用memes.api.list查看所有可用模板')
       .example('memes.api 吃 @用户 - 生成"吃"表情')
+      .example('memes.api - 随机使用模板生成表情')
       .action(async ({ session }, type, arg1, arg2) => {
         // 查找索引
         const index = !type
@@ -118,6 +119,8 @@ export class MemeAPI {
       })
     api.subcommand('.list [page:string]', '列出可用模板列表')
       .usage('输入页码查看列表或使用"all"查看所有模板')
+      .example('memes.api.list - 查看第一页API模板列表')
+      .example('memes.api.list all - 查看所有API模板列表')
       .action(({}, page) => {
         const ITEMS_PER_PAGE = 10
         const showAll = page === 'all'
@@ -164,6 +167,7 @@ export class MemeAPI {
         return header + displayLines.join('\n')
       })
     api.subcommand('.reload', '重载自定义API配置', { authority: 3 })
+      .usage('重新加载本地API配置文件')
       .action(async ({ session }) => {
         try {
           const content = fs.readFileSync(this.configPath, 'utf-8')

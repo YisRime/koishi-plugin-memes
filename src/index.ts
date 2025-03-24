@@ -527,7 +527,9 @@ export function apply(ctx: Context, config: Config) {
     if (!apiUrl) return
     // 加载本地缓存
     memeCache = await loadCache(ctx)
-    logger.info(`已加载缓存文件：${memeCache.length}项`)
+    if (memeCache.length > 0) {
+      logger.info(`已加载缓存文件：${memeCache.length}项`)
+    }
     // 如果没有缓存，则获取一次
     if (memeCache.length === 0) {
       await refreshCache(ctx, apiUrl)
@@ -537,8 +539,9 @@ export function apply(ctx: Context, config: Config) {
   initCache()
 
   const meme = ctx.command('memes [key:string] [...texts:text]', '制作表情包')
-    .usage('输入类型并补充对应参数来生成对应表情')
-    .example('memes ba_say -character=1 -position=right 你好 - 生成"心奈"说话的表情')
+    .usage('输入类型并补充对应参数来生成对应表情\n使用memes.list或memes.search搜索表情模板\n使用memes.info查看模板详细信息\n使用"-xx"提供参数，使用"@用户"或"-u用户ID"提供用户头像')
+    .example('memes ba_say -character=1 -position=right 你好 - 生成带参数的"心奈"说"你好"的表情')
+    .example('memes eat @用户 - 使用指定用户头像生成"吃"表情')
     .action(async ({ session }, key, ...args) => {
       if (!key) {
         return sendTempError(session, '请提供模板ID和文本参数');
@@ -563,6 +566,8 @@ export function apply(ctx: Context, config: Config) {
 
   meme.subcommand('.list [page:string]', '列出可用模板列表')
     .usage('输入页码查看列表或使用"all"查看所有模板')
+    .example('memes.list - 查看第一页模板列表')
+    .example('memes.list all - 查看所有模板列表')
     .action(async ({ session }, page) => {
       try {
         let keys: string[];
@@ -670,8 +675,8 @@ export function apply(ctx: Context, config: Config) {
     });
 
   meme.subcommand('.info [key:string]', '获取模板详细信息')
-    .usage('查看指定表情模板的详细信息')
-    .example('memes.info ba_say - 查看"ba_say"模板的详细信息')
+    .usage('查看指定表情模板的详细信息，可查询内置参数')
+    .example('memes.info ba_say - 查看"ba_say"模板的详细信息和参数')
     .action(async ({ session }, key) => {
       if (!key) {
         return sendTempError(session, '请提供模板ID');
@@ -800,6 +805,7 @@ export function apply(ctx: Context, config: Config) {
       }
     });
   meme.subcommand('.refresh', '刷新表情模板缓存', { authority: 3 })
+    .usage('手动刷新表情模板缓存数据')
     .action(async ({ session }) => {
       try {
         await refreshCache(ctx, apiUrl);

@@ -125,9 +125,15 @@ export class MemeMaker {
    * 注册表情生成相关命令
    */
   registerCommands(parentCommand: Command): Command {
-    const make = parentCommand.subcommand('.make', '生成内置表情图片');
+    const make = parentCommand.subcommand('.make', '生成内置表情图片')
+      .usage('生成各种预设的表情图片')
+      .example('memes.make jiazi @用户 - 使用指定用户头像生成"你要被夹"图片');
+
     const registerStyle = (name, description) => {
       make.subcommand(`.${name} [target:text]`, description)
+        .usage(`根据用户头像生成${description}`)
+        .example(`memes.make.${name} @用户 - 使用指定用户头像生成图片`)
+        .example(`memes.make.${name} 123456789 - 使用QQ号生成图片`)
         .action(async (params, target) => {
           const session = params.session;
           const userId = target ? parseTarget(target) || session.userId : session.userId;
