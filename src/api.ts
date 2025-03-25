@@ -1,5 +1,5 @@
 import { Context, Command, h, Logger } from 'koishi'
-import { parseTarget, autoRecall } from './index'
+import { MemeGenerator } from './generator'
 import axios from 'axios'
 import fs from 'fs'
 import path from 'path'
@@ -22,15 +22,18 @@ export class MemeAPI {
   private apiConfigs: ApiConfig[] = [];
   private logger: Logger;
   private configPath: string;
+  private generator: MemeGenerator;
 
   /**
    * 创建一个 MemeAPI 实例
    * @param ctx Koishi 上下文
    * @param logger 日志记录器
+   * @param generator 表情生成器实例
    */
-  constructor(ctx: Context, logger: Logger) {
+  constructor(ctx: Context, logger: Logger, generator: MemeGenerator) {
     this.ctx = ctx
     this.logger = logger
+    this.generator = generator
     this.configPath = path.resolve(this.ctx.baseDir, 'data', 'memes-api.json')
     this.loadConfig()
   }
@@ -85,12 +88,12 @@ export class MemeAPI {
               config.description.split('|')[0].trim() === type.trim()
             );
         if (index === -1) {
-          return autoRecall(session, `未找到表情"${type}"`);
+          return this.generator.autoRecall(session, `未找到表情"${type}"`);
         }
 
         const config = this.apiConfigs[index];
-        const parsedArg1 = parseTarget(arg1)
-        const parsedArg2 = parseTarget(arg2)
+        const parsedArg1 = this.generator.parseTarget(arg1)
+        const parsedArg2 = this.generator.parseTarget(arg2)
         // 替换占位符
         let apiUrl = config.apiEndpoint
           .replace(/\${arg1}/g, parsedArg1)
@@ -111,7 +114,7 @@ export class MemeAPI {
           }
           return h('image', { url: imageUrl })
         } catch (err) {
-          return autoRecall(session, '生成出错：' + err.message);
+          return this.generator.autoRecall(session, '生成出错：' + err.message);
         }
       })
     api.subcommand('.list [page:string]', '列出可用模板列表')
@@ -171,7 +174,7 @@ export class MemeAPI {
           this.apiConfigs = JSON.parse(content)
           return `已重载配置文件：${this.apiConfigs.length}项`
         } catch (err) {
-          return autoRecall(session, '重载配置失败：' + err.message);
+          return this.generator.autoRecall(session, '重载配置失败：' + err.message);
         }
       })
   }
