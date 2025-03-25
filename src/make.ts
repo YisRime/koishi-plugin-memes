@@ -127,7 +127,7 @@ export class MemeMaker {
   registerCommands(parentCommand: Command): Command {
     const make = parentCommand.subcommand('.make', '生成内置表情图片')
       .usage('生成各种预设的表情图片')
-      .example('memes.make jiazi @用户 - 使用指定用户头像生成"你要被夹"图片');
+      .example('memes.make.jiazi @用户 - 使用指定用户头像生成"你要被夹"图片');
 
     const registerStyle = (name, description) => {
       make.subcommand(`.${name} [target:text]`, description)

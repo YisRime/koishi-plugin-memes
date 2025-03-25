@@ -74,7 +74,7 @@ export class MemeAPI {
    */
   registerCommands(meme: Command) {
     const api = meme.subcommand('.api [type:string] [arg1:string] [arg2:string]', '使用自定义API生成表情')
-      .usage('输入类型并补充对应参数来生成对应表情\n可使用memes.api.list查看所有可用模板')
+      .usage('输入类型并补充对应参数来生成对应表情，使用关键词匹配')
       .example('memes.api 吃 @用户 - 生成"吃"表情')
       .example('memes.api - 随机使用模板生成表情')
       .action(async ({ session }, type, arg1, arg2) => {

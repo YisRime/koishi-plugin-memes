@@ -251,15 +251,41 @@ async function getImageBlob(url: string): Promise<Blob | null> {
 }
 
 /**
- * 检查数值是否在范围内并格式化范围显示
+ * 检查数值是否在范围内并返回格式化的验证消息
+ * @param type 参数类型名称（如"图片"、"文本"）
+ * @param value 当前值
+ * @param min 最小值
+ * @param max 最大值
+ * @param unit 单位名称（如"张"、"条"）
+ * @returns 如果验证通过返回null，否则返回错误消息
  */
-function checkAndFormatRange(value: number, min?: number, max?: number): { valid: boolean, display: string } {
+function validateRange(type: string, value: number, min?: number, max?: number, unit: string = ''): string | null {
+  // 验证是否在范围内
   const valid = (min == null || value >= min) && (max == null || value <= max);
-  let display = '';
-  if (min === max) display = `${min}`;
-  else if (min != null) display = `至少${min}`;
-  else if (max != null) display = `最多${max}`;
-  return { valid, display };
+  if (valid) return null;
+
+  // 确定错误类型和范围显示
+  let rangeText: string;
+  let errorType: string;
+
+  if (min === max && min != null) {
+    rangeText = `${min}${unit}`;
+    errorType = '数量不符';
+  } else if (min != null && max != null) {
+    rangeText = `${min}~${max}${unit}`;
+    errorType = value < min ? '数量不足' : '数量过多';
+  } else if (min != null) {
+    rangeText = `至少${min}${unit}`;
+    errorType = '数量不足';
+  } else if (max != null) {
+    rangeText = `最多${max}${unit}`;
+    errorType = '数量过多';
+  } else {
+    return `${type}数量错误！当前: ${value}${unit}`;
+  }
+
+  // 返回格式化的错误消息
+  return `${type}${errorType}！当前: ${value}${unit}，需要: ${rangeText}`;
 }
 
 /**
@@ -272,57 +298,51 @@ function splitArgString(text: string): string[] {
 }
 
 /**
- * 处理特定模板的参数
- */
-function processTemplateOptions(templateInfo: MemeInfo, options: Record<string, string>): Record<string, any> {
-  const result: Record<string, any> = {};
-  const paramsType = templateInfo.params_type || {};
-  // 处理参数模型中定义的属性
-  if (paramsType.args_type?.args_model?.properties) {
-    const properties = paramsType.args_type.args_model.properties;
-    for (const key in properties) {
-      const prop = properties[key];
-      if (key === 'user_infos') continue;
-      // 检查是否在命令选项中提供了该参数
-      if (options[key] !== undefined) {
-        const value = options[key];
-        // 根据属性类型进行转换
-        if (prop.type === 'integer' || prop.type === 'number') {
-          result[key] = Number(value);
-        } else if (prop.type === 'boolean') {
-          result[key] = value === 'true';
-        } else {
-          result[key] = value;
-        }
-      } else if (prop.default !== undefined) {
-        // 使用默认值
-        result[key] = prop.default;
-      }
-    }
-  }
-  return result;
-}
-
-/**
  * 从文本中提取选项并返回清理后的文本
  */
 function extractOptionsFromText(text: string): { cleanText: string, options: Record<string, string> } {
   const options: Record<string, string> = {};
-  // 提取形如 "-option=value" 或 "-option" 的选项
-  const cleanText = text.replace(/-([a-zA-Z0-9_]+)(?:=([^\s]+))?/g, (match, key, value) => {
-    options[key] = value || 'true';
-    return '';
-  }).trim();
+
+  // 提取选项参数
+  const cleanText = text.replace(/(?:--)([a-zA-Z0-9_]+)(?:=([^\s]+))?|(\p{Script=Han}+)(?:=([^\s]+))?/gu,
+    (match, key1, value1, key2, value2) => {
+      const key = key1 || key2;
+      const value = value1 || value2 || 'true';
+      if (key) {
+        options[key] = value;
+      }
+      return '';
+    }).trim();
+
   return { cleanText, options };
 }
 
 /**
  * 处理命令参数并提取图片、文本和选项
  */
-async function processArgs(session: any, args: h[]) {
+async function processArgs(session: any, args: h[], templateInfo?: MemeInfo) {
   const imageInfos: Array<{ src: string } | { userId: string }> = [];
   const texts: string[] = [];
   let options: Record<string, string> = {};
+
+  // 预处理模板参数定义
+  let paramOptions: Map<string, {dest: string, action: any}> = new Map();
+  if (templateInfo?.params_type?.args_type?.parser_options) {
+    for (const opt of templateInfo.params_type.args_type.parser_options) {
+      if (opt.names && opt.names.length) {
+        // 为每个别名创建映射
+        for (const name of opt.names) {
+          // 移除前缀 -- 或 -
+          const cleanName = name.replace(/^(--)|-/g, '');
+          paramOptions.set(cleanName, {
+            dest: opt.dest || cleanName,
+            action: opt.action || { type: 0, value: true }
+          });
+        }
+      }
+    }
+  }
+
   // 添加引用消息中的图片
   if (session.quote?.elements) {
     const processElement = (e: h) => {
@@ -337,35 +357,58 @@ async function processArgs(session: any, args: h[]) {
       processElement(element);
     }
   }
+
   // 处理参数中的图片和文本
   const textBuffer: string[] = [];
   const resolveBuffer = () => {
     if (!textBuffer.length) return;
     const text = textBuffer.join('');
+
     // 提取选项
-    const { options: extractedOptions } = extractOptionsFromText(text);
-    Object.assign(options, extractedOptions);
+    const { cleanText, options: extractedOptions } = extractOptionsFromText(text);
+
+    // 处理从文本中提取的选项
+    for (const [key, value] of Object.entries(extractedOptions)) {
+      // 检查是否有匹配的参数定义
+      const paramDef = paramOptions.get(key);
+      if (paramDef) {
+        // 使用目标名称作为参数名
+        const destKey = paramDef.dest || key;
+
+        // 根据action类型处理参数值
+        if (paramDef.action && paramDef.action.type === 0) {
+          // 布尔类型参数
+          options[destKey] = value === 'false' ? 'false' : 'true';
+        } else {
+          options[destKey] = value;
+        }
+      } else {
+        // 没有匹配定义时，直接使用提取的键值
+        options[key] = value;
+      }
+    }
+
     // 检查文本中是否有 <at id="xxx"/> 格式的标签
     const atRegex = /<at\s+id="(\d+)"\s*\/>/g;
     let match;
     let lastIndex = 0;
     let hasAtTag = false;
+
+    // 使用清理后的文本处理@标签和普通文本
+    const textToProcess = cleanText || text;
+
     // 查找所有 at 标签
-    while ((match = atRegex.exec(text)) !== null) {
+    while ((match = atRegex.exec(textToProcess)) !== null) {
       hasAtTag = true;
       // 处理 at 标签前的文本
       if (match.index > lastIndex) {
-        const segment = text.substring(lastIndex, match.index);
+        const segment = textToProcess.substring(lastIndex, match.index);
         const segmentTexts = splitArgString(segment).filter(v => {
-          if (v.startsWith('-u')) {
-            imageInfos.push({ userId: v.slice(2) });
-            return false;
-          }
           if (v.startsWith('@')) {
             imageInfos.push({ userId: parseTarget(v) });
             return false;
           }
-          return true;
+          return !!v.trim(); // 只保留非空文本
         });
         texts.push(...segmentTexts);
       }
@@ -373,24 +416,23 @@ async function processArgs(session: any, args: h[]) {
       imageInfos.push({ userId: match[1] });
       lastIndex = match.index + match[0].length;
     }
+
     // 如果没有找到 at 标签，或者处理完最后一个 at 标签后还有文本
-    if (!hasAtTag || lastIndex < text.length) {
-      const remainingText = hasAtTag ? text.substring(lastIndex) : text;
+    if (!hasAtTag || lastIndex < textToProcess.length) {
+      const remainingText = hasAtTag ? textToProcess.substring(lastIndex) : textToProcess;
       const bufferTexts = splitArgString(remainingText).filter(v => {
-        if (v.startsWith('-u')) {
-          imageInfos.push({ userId: v.slice(2) });
-          return false;
-        }
         if (v.startsWith('@')) {
           imageInfos.push({ userId: parseTarget(v) });
           return false;
         }
-        return true;
+        return !!v.trim(); // 只保留非空文本
       });
       texts.push(...bufferTexts);
     }
+
     textBuffer.length = 0;
   };
+
   const processElement = (e: h) => {
     if (e.children?.length) {
       for (const child of e.children) processElement(child);
@@ -406,11 +448,46 @@ async function processArgs(session: any, args: h[]) {
       imageInfos.push({ userId: e.attrs.id });
     }
   };
+
   for (const element of args) {
     processElement(element);
   }
   resolveBuffer();
-  return { imageInfos, texts, options };
+
+  // 转换选项值的类型（根据模板的数据模型）
+  const typedOptions: Record<string, any> = {};
+  if (templateInfo?.params_type?.args_type?.args_model?.properties) {
+    const properties = templateInfo.params_type.args_type.args_model.properties;
+    for (const [key, value] of Object.entries(options)) {
+      if (key === 'user_infos') continue; // 用户信息由系统处理
+
+      if (properties[key]) {
+        const prop = properties[key];
+        // 根据属性类型进行转换
+        if (prop.type === 'integer' || prop.type === 'number') {
+          typedOptions[key] = Number(value);
+        } else if (prop.type === 'boolean') {
+          typedOptions[key] = value === 'true';
+        } else {
+          typedOptions[key] = value;
+        }
+      } else {
+        // 无类型定义时保持原值
+        typedOptions[key] = value;
+      }
+    }
+  } else {
+    // 没有模型定义时，尝试基本类型推断
+    for (const [key, value] of Object.entries(options)) {
+      if (value === 'true') typedOptions[key] = true;
+      else if (value === 'false') typedOptions[key] = false;
+      else if (/^-?\d+$/.test(value)) typedOptions[key] = parseInt(value);
+      else if (/^-?\d+\.\d+$/.test(value)) typedOptions[key] = parseFloat(value);
+      else typedOptions[key] = value;
+    }
+  }
+
+  return { imageInfos, texts, options: typedOptions };
 }
 
 /**
@@ -437,9 +514,9 @@ async function processTemplateParameters(session: any, key: string, args: h[], a
     default_texts: defaultTexts = []
   } = paramsType;
 
-  // 解析参数
+  // 解析参数，传入模板信息用于参数处理
   const hArgs = args.map(arg => typeof arg === 'string' ? h('text', { content: arg }) : arg);
-  const { imageInfos, texts, options } = await processArgs(session, hArgs);
+  const { imageInfos, texts, options } = await processArgs(session, hArgs, templateInfo);
 
   // 使用发送者头像
   let processedImageInfos = [...imageInfos];
@@ -458,14 +535,14 @@ async function processTemplateParameters(session: any, key: string, args: h[], a
   }
 
   // 验证参数数量
-  const imagesCheck = checkAndFormatRange(processedImageInfos.length, minImages, maxImages);
-  if (!imagesCheck.valid) {
-    return autoRecall(session, `图片提供(${processedImageInfos.length}/${imagesCheck.display})张`);
+  const imagesError = validateRange('图片', processedImageInfos.length, minImages, maxImages, '张');
+  if (imagesError) {
+    return autoRecall(session, imagesError);
   }
 
-  const textsCheck = checkAndFormatRange(processedTexts.length, minTexts, maxTexts);
-  if (!textsCheck.valid) {
-    return autoRecall(session, `文本提供(${processedTexts.length}/${textsCheck.display})条`);
+  const textsError = validateRange('文本', processedTexts.length, minTexts, maxTexts, '条');
+  if (textsError) {
+    return autoRecall(session, textsError);
   }
 
   // 处理图片和用户信息
@@ -491,9 +568,8 @@ async function processTemplateParameters(session: any, key: string, args: h[], a
     }
   }
 
-  // 处理模板特定参数
-  const templateOptions = processTemplateOptions(templateInfo, options);
-  return { templateInfo, images, texts: processedTexts, userInfos, templateOptions };
+  // 处理模板特定参数 (不再需要单独处理，已在processArgs中处理)
+  return { templateInfo, images, texts: processedTexts, userInfos, templateOptions: options };
 }
 
 /**
