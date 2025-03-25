@@ -43,17 +43,10 @@ let memeCache: MemeInfo[] = []
 let lastCacheTime = 0
 
 /**
- * 获取缓存文件路径
- */
-function getCachePath(ctx: Context): string {
-  return path.resolve(ctx.baseDir, 'data', 'memes.json')
-}
-
-/**
  * 加载缓存
  */
 async function loadCache(ctx: Context): Promise<MemeInfo[]> {
-  const cachePath = getCachePath(ctx)
+  const cachePath = path.resolve(ctx.baseDir, 'data', 'memes.json')
 
   if (fs.existsSync(cachePath)) {
     const cacheData = JSON.parse(fs.readFileSync(cachePath, 'utf-8'))
@@ -70,7 +63,7 @@ async function loadCache(ctx: Context): Promise<MemeInfo[]> {
  * 保存缓存
  */
 async function saveCache(ctx: Context, data: MemeInfo[]): Promise<void> {
-  const cachePath = getCachePath(ctx)
+  const cachePath = path.resolve(ctx.baseDir, 'data', 'memes.json')
 
   const dir = path.dirname(cachePath)
   if (!fs.existsSync(dir)) {
@@ -234,90 +227,6 @@ async function apiRequest<T = any>(url: string, options: {
 }
 
 /**
- * 从URL获取图片Blob
- */
-async function getImageBlob(url: string): Promise<Blob | null> {
-  try {
-    const response = await axios.get(url, {
-      responseType: 'arraybuffer',
-      timeout: 8000
-    });
-    const buffer = Buffer.from(response.data);
-    return new Blob([buffer], { type: response.headers['content-type'] || 'image/png' });
-  } catch (e) {
-    logger.error(`获取图片失败: ${url} - ${e.message}`);
-    return null;
-  }
-}
-
-/**
- * 检查数值是否在范围内并返回格式化的验证消息
- * @param type 参数类型名称（如"图片"、"文本"）
- * @param value 当前值
- * @param min 最小值
- * @param max 最大值
- * @param unit 单位名称（如"张"、"条"）
- * @returns 如果验证通过返回null，否则返回错误消息
- */
-function validateRange(type: string, value: number, min?: number, max?: number, unit: string = ''): string | null {
-  // 验证是否在范围内
-  const valid = (min == null || value >= min) && (max == null || value <= max);
-  if (valid) return null;
-
-  // 确定错误类型和范围显示
-  let rangeText: string;
-  let errorType: string;
-
-  if (min === max && min != null) {
-    rangeText = `${min}${unit}`;
-    errorType = '数量不符';
-  } else if (min != null && max != null) {
-    rangeText = `${min}~${max}${unit}`;
-    errorType = value < min ? '数量不足' : '数量过多';
-  } else if (min != null) {
-    rangeText = `至少${min}${unit}`;
-    errorType = '数量不足';
-  } else if (max != null) {
-    rangeText = `最多${max}${unit}`;
-    errorType = '数量过多';
-  } else {
-    return `${type}数量错误！当前: ${value}${unit}`;
-  }
-
-  // 返回格式化的错误消息
-  return `${type}${errorType}！当前: ${value}${unit}，需要: ${rangeText}`;
-}
-
-/**
- * 从文本中分割参数
- */
-function splitArgString(text: string): string[] {
-  const matched = text.match(/[^\s"']+|"([^"]*)"|'([^']*)'/g)
-  if (!matched) return []
-  return matched.map(v => v.replace(/^["']|["']$/g, ''))
-}
-
-/**
- * 从文本中提取选项并返回清理后的文本
- */
-function extractOptionsFromText(text: string): { cleanText: string, options: Record<string, string> } {
-  const options: Record<string, string> = {};
-
-  // 提取选项参数
-  const cleanText = text.replace(/(?:--)([a-zA-Z0-9_]+)(?:=([^\s]+))?|(\p{Script=Han}+)(?:=([^\s]+))?/gu,
-    (match, key1, value1, key2, value2) => {
-      const key = key1 || key2;
-      const value = value1 || value2 || 'true';
-      if (key) {
-        options[key] = value;
-      }
-      return '';
-    }).trim();
-
-  return { cleanText, options };
-}
-
-/**
  * 处理命令参数并提取图片、文本和选项
  */
 async function processArgs(session: any, args: h[], templateInfo?: MemeInfo) {
@@ -365,7 +274,16 @@ async function processArgs(session: any, args: h[], templateInfo?: MemeInfo) {
     const text = textBuffer.join('');
 
     // 提取选项
-    const { cleanText, options: extractedOptions } = extractOptionsFromText(text);
+    const extractedOptions: Record<string, string> = {};
+    const cleanText = text.replace(/(?:--)([a-zA-Z0-9_]+)(?:=([^\s]+))?|(\p{Script=Han}+)(?:=([^\s]+))?/gu,
+      (match, key1, value1, key2, value2) => {
+        const key = key1 || key2;
+        const value = value1 || value2 || 'true';
+        if (key) {
+          extractedOptions[key] = value;
+        }
+        return '';
+      }).trim();
 
     // 处理从文本中提取的选项
     for (const [key, value] of Object.entries(extractedOptions)) {
@@ -403,13 +321,19 @@ async function processArgs(session: any, args: h[], templateInfo?: MemeInfo) {
       // 处理 at 标签前的文本
       if (match.index > lastIndex) {
         const segment = textToProcess.substring(lastIndex, match.index);
-        const segmentTexts = splitArgString(segment).filter(v => {
+
+        const segmentTexts = (() => {
+          const matched = segment.match(/[^\s"']+|"([^"]*)"|'([^']*)'/g);
+          if (!matched) return [];
+          return matched.map(v => v.replace(/^["']|["']$/g, ''));
+        })().filter(v => {
           if (v.startsWith('@')) {
             imageInfos.push({ userId: parseTarget(v) });
             return false;
           }
-          return !!v.trim(); // 只保留非空文本
+          return !!v.trim();
         });
+
         texts.push(...segmentTexts);
       }
       // 处理 at 标签
@@ -420,13 +344,19 @@ async function processArgs(session: any, args: h[], templateInfo?: MemeInfo) {
     // 如果没有找到 at 标签，或者处理完最后一个 at 标签后还有文本
     if (!hasAtTag || lastIndex < textToProcess.length) {
       const remainingText = hasAtTag ? textToProcess.substring(lastIndex) : textToProcess;
-      const bufferTexts = splitArgString(remainingText).filter(v => {
+
+      const bufferTexts = (() => {
+        const matched = remainingText.match(/[^\s"']+|"([^"]*)"|'([^']*)'/g);
+        if (!matched) return [];
+        return matched.map(v => v.replace(/^["']|["']$/g, ''));
+      })().filter(v => {
         if (v.startsWith('@')) {
           imageInfos.push({ userId: parseTarget(v) });
           return false;
         }
-        return !!v.trim(); // 只保留非空文本
+        return !!v.trim();
       });
+
       texts.push(...bufferTexts);
     }
 
@@ -459,7 +389,7 @@ async function processArgs(session: any, args: h[], templateInfo?: MemeInfo) {
   if (templateInfo?.params_type?.args_type?.args_model?.properties) {
     const properties = templateInfo.params_type.args_type.args_model.properties;
     for (const [key, value] of Object.entries(options)) {
-      if (key === 'user_infos') continue; // 用户信息由系统处理
+      if (key === 'user_infos') continue;
 
       if (properties[key]) {
         const prop = properties[key];
@@ -535,12 +465,82 @@ async function processTemplateParameters(session: any, key: string, args: h[], a
   }
 
   // 验证参数数量
-  const imagesError = validateRange('图片', processedImageInfos.length, minImages, maxImages, '张');
+  const validateImageRange = () => {
+    const value = processedImageInfos.length;
+    const min = minImages;
+    const max = maxImages;
+    const type = "图片";
+    const unit = "张";
+
+    // 验证是否在范围内
+    const valid = (min == null || value >= min) && (max == null || value <= max);
+    if (valid) return null;
+
+    // 确定错误类型和范围显示
+    let rangeText: string;
+    let errorType: string;
+
+    if (min === max && min != null) {
+      rangeText = `${min}${unit}`;
+      errorType = '数量不符';
+    } else if (min != null && max != null) {
+      rangeText = `${min}~${max}${unit}`;
+      errorType = value < min ? '数量不足' : '数量过多';
+    } else if (min != null) {
+      rangeText = `至少${min}${unit}`;
+      errorType = '数量不足';
+    } else if (max != null) {
+      rangeText = `最多${max}${unit}`;
+      errorType = '数量过多';
+    } else {
+      return `${type}数量错误！当前: ${value}${unit}`;
+    }
+
+    // 返回格式化的错误消息
+    return `${type}${errorType}！当前: ${value}${unit}，需要: ${rangeText}`;
+  };
+
+  const validateTextRange = () => {
+    const value = processedTexts.length;
+    const min = minTexts;
+    const max = maxTexts;
+    const type = "文本";
+    const unit = "条";
+
+    // 验证是否在范围内
+    const valid = (min == null || value >= min) && (max == null || value <= max);
+    if (valid) return null;
+
+    // 确定错误类型和范围显示
+    let rangeText: string;
+    let errorType: string;
+
+    if (min === max && min != null) {
+      rangeText = `${min}${unit}`;
+      errorType = '数量不符';
+    } else if (min != null && max != null) {
+      rangeText = `${min}~${max}${unit}`;
+      errorType = value < min ? '数量不足' : '数量过多';
+    } else if (min != null) {
+      rangeText = `至少${min}${unit}`;
+      errorType = '数量不足';
+    } else if (max != null) {
+      rangeText = `最多${max}${unit}`;
+      errorType = '数量过多';
+    } else {
+      return `${type}数量错误！当前: ${value}${unit}`;
+    }
+
+    // 返回格式化的错误消息
+    return `${type}${errorType}！当前: ${value}${unit}，需要: ${rangeText}`;
+  };
+
+  const imagesError = validateImageRange();
   if (imagesError) {
     return autoRecall(session, imagesError);
   }
 
-  const textsError = validateRange('文本', processedTexts.length, minTexts, maxTexts, '条');
+  const textsError = validateTextRange();
   if (textsError) {
     return autoRecall(session, textsError);
   }
@@ -551,7 +551,18 @@ async function processTemplateParameters(session: any, key: string, args: h[], a
 
   for (const info of processedImageInfos) {
     if ('src' in info) {
-      const blob = await getImageBlob(info.src);
+      let blob: Blob | null = null;
+      try {
+        const response = await axios.get(info.src, {
+          responseType: 'arraybuffer',
+          timeout: 8000
+        });
+        const buffer = Buffer.from(response.data);
+        blob = new Blob([buffer], { type: response.headers['content-type'] || 'image/png' });
+      } catch (e) {
+        logger.error(`获取图片失败: ${info.src} - ${e.message}`);
+      }
+
       if (!blob) {
         return autoRecall(session, `获取图片失败: ${info.src}`);
       }
@@ -559,7 +570,19 @@ async function processTemplateParameters(session: any, key: string, args: h[], a
       userInfos.push({});
     } else if ('userId' in info) {
       const avatarUrl = await getUserAvatar(session, info.userId);
-      const blob = await getImageBlob(avatarUrl);
+
+      let blob: Blob | null = null;
+      try {
+        const response = await axios.get(avatarUrl, {
+          responseType: 'arraybuffer',
+          timeout: 8000
+        });
+        const buffer = Buffer.from(response.data);
+        blob = new Blob([buffer], { type: response.headers['content-type'] || 'image/png' });
+      } catch (e) {
+        logger.error(`获取图片失败: ${avatarUrl} - ${e.message}`);
+      }
+
       if (!blob) {
         return autoRecall(session, `获取用户头像失败: ${info.userId}`);
       }
@@ -567,49 +590,8 @@ async function processTemplateParameters(session: any, key: string, args: h[], a
       userInfos.push({ name: info.userId });
     }
   }
-
-  // 处理模板特定参数 (不再需要单独处理，已在processArgs中处理)
+  // 处理模板特定参数
   return { templateInfo, images, texts: processedTexts, userInfos, templateOptions: options };
-}
-
-/**
- * 生成表情包
- */
-async function generateMeme(apiUrl: string, key: string, images: Blob[], texts: string[], userInfos: any[], templateOptions: Record<string, any> = {}): Promise<Buffer | null> {
-  const formData = new FormData();
-
-  // 添加文本和图片
-  texts.forEach(text => formData.append('texts', text));
-  images.forEach(img => formData.append('images', img));
-
-  // 合并用户信息和模板特定参数
-  const args = {
-    user_infos: userInfos,
-    ...templateOptions
-  };
-
-  // 添加其他参数
-  formData.append('args', JSON.stringify(args));
-
-  try {
-    // 请求生成表情包
-    const result = await apiRequest<Buffer>(`${apiUrl}/memes/${key}/`, {
-      method: 'post',
-      formData,
-      responseType: 'arraybuffer',
-      timeout: 10000
-    });
-
-    if (!result) {
-      logger.error(`生成表情失败: ${key} - API返回空结果`);
-      return null;
-    }
-
-    return result;
-  } catch (e) {
-    logger.error(`生成表情失败: ${key} - ${e.message}`);
-    return null;
-  }
 }
 
 /**
@@ -654,9 +636,29 @@ export function apply(ctx: Context, config: Config) {
 
         // 生成表情包
         logger.debug(`正在生成表情: ${key}, 文本数量: ${texts.length}, 图片数量: ${images.length}`);
-        const imageBuffer = await generateMeme(apiUrl, key, images, texts, userInfos, templateOptions);
+
+        const formData = new FormData();
+        // 添加文本和图片
+        texts.forEach(text => formData.append('texts', text));
+        images.forEach(img => formData.append('images', img));
+        // 合并用户信息和模板特定参数
+        const memeArgs = {
+          user_infos: userInfos,
+          ...templateOptions
+        };
+        // 添加其他参数
+        formData.append('args', JSON.stringify(memeArgs));
+
+        // 请求生成表情包
+        const imageBuffer = await apiRequest<Buffer>(`${apiUrl}/memes/${key}/`, {
+          method: 'post',
+          formData,
+          responseType: 'arraybuffer',
+          timeout: 10000
+        });
 
         if (!imageBuffer) {
+          logger.error(`生成表情失败: ${key} - API返回空结果`);
           return autoRecall(session, `生成表情失败: ${key}`);
         }
 
