@@ -358,10 +358,6 @@ async function processArgs(session: any, args: h[]) {
       if (match.index > lastIndex) {
         const segment = text.substring(lastIndex, match.index);
         const segmentTexts = splitArgString(segment).filter(v => {
-          if (v.startsWith('-u')) {
-            imageInfos.push({ userId: v.slice(2) });
-            return false;
-          }
           if (v.startsWith('@')) {
             imageInfos.push({ userId: parseTarget(v) });
             return false;
@@ -378,10 +374,6 @@ async function processArgs(session: any, args: h[]) {
     if (!hasAtTag || lastIndex < text.length) {
       const remainingText = hasAtTag ? text.substring(lastIndex) : text;
       const bufferTexts = splitArgString(remainingText).filter(v => {
-        if (v.startsWith('-u')) {
-          imageInfos.push({ userId: v.slice(2) });
-          return false;
-        }
         if (v.startsWith('@')) {
           imageInfos.push({ userId: parseTarget(v) });
           return false;
@@ -539,7 +531,7 @@ export function apply(ctx: Context, config: Config) {
   initCache()
 
   const meme = ctx.command('memes [key:string] [...texts:text]', '制作表情包')
-    .usage('输入类型并补充对应参数来生成对应表情\n使用memes.list或memes.search搜索表情模板\n使用memes.info查看模板详细信息\n使用"-xx"提供参数，使用"@用户"或"-u用户ID"提供用户头像')
+    .usage('输入类型并补充对应参数来生成对应表情\n使用"-xx"提供参数，"@用户"提供头像\n使用"."来调用子指令，如"memes.list"')
     .example('memes ba_say -character=1 -position=right 你好 - 生成带参数的"心奈"说"你好"的表情')
     .example('memes eat @用户 - 使用指定用户头像生成"吃"表情')
     .action(async ({ session }, key, ...args) => {
