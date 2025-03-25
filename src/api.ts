@@ -85,19 +85,18 @@ export class MemeAPI {
               config.description.split('|')[0].trim() === type.trim()
             );
         if (index === -1) {
-          const msg = await session.send(`未找到表情"${type}"`);
-          autoRecall(session, msg);
-          return;
+          return autoRecall(session, `未找到表情"${type}"`);
         }
+
+        const config = this.apiConfigs[index];
+        const parsedArg1 = parseTarget(arg1)
+        const parsedArg2 = parseTarget(arg2)
+        // 替换占位符
+        let apiUrl = config.apiEndpoint
+          .replace(/\${arg1}/g, parsedArg1)
+          .replace(/\${arg2}/g, parsedArg2)
+        // 请求图片
         try {
-          const config = this.apiConfigs[index];
-          const parsedArg1 = parseTarget(arg1)
-          const parsedArg2 = parseTarget(arg2)
-          // 替换占位符
-          let apiUrl = config.apiEndpoint
-            .replace(/\${arg1}/g, parsedArg1)
-            .replace(/\${arg2}/g, parsedArg2)
-          // 请求图片
           const response = await axios.get(apiUrl, {
             timeout: 8000,
             validateStatus: () => true,
@@ -112,9 +111,7 @@ export class MemeAPI {
           }
           return h('image', { url: imageUrl })
         } catch (err) {
-          const msg = await session.send('生成出错：' + err.message);
-          autoRecall(session, msg);
-          return;
+          return autoRecall(session, '生成出错：' + err.message);
         }
       })
     api.subcommand('.list [page:string]', '列出可用模板列表')
@@ -174,9 +171,7 @@ export class MemeAPI {
           this.apiConfigs = JSON.parse(content)
           return `已重载配置文件：${this.apiConfigs.length}项`
         } catch (err) {
-          const msg = await session.send('重载配置失败：' + err.message);
-          autoRecall(session, msg);
-          return;
+          return autoRecall(session, '重载配置失败：' + err.message);
         }
       })
   }

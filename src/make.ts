@@ -81,7 +81,7 @@ export class MemeMaker {
       ));
       return await page.screenshot({ type: 'png', fullPage: false })
     } catch (error) {
-      throw new Error('图片渲染出错:', error)
+      throw new Error('图片渲染出错:' + error.message)
     } finally {
       await page.close()
     }
@@ -142,9 +142,7 @@ export class MemeMaker {
             const result = await this.generateAvatarEffect(avatar, name);
             return h.image(result, 'image/png');
           } catch (error) {
-            const msg = await session.send('生成出错：' + error.message);
-            autoRecall(session, msg);
-            return;
+            return autoRecall(session, '生成出错：' + error.message);
           }
         });
     };

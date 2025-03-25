@@ -54,17 +54,15 @@ function getCachePath(ctx: Context): string {
  */
 async function loadCache(ctx: Context): Promise<MemeInfo[]> {
   const cachePath = getCachePath(ctx)
-  try {
-    if (fs.existsSync(cachePath)) {
-      const cacheData = JSON.parse(fs.readFileSync(cachePath, 'utf-8'))
-      if (cacheData.time && cacheData.data) {
-        lastCacheTime = cacheData.time
-        return cacheData.data
-      }
+
+  if (fs.existsSync(cachePath)) {
+    const cacheData = JSON.parse(fs.readFileSync(cachePath, 'utf-8'))
+    if (cacheData.time && cacheData.data) {
+      lastCacheTime = cacheData.time
+      return cacheData.data
     }
-  } catch (e) {
-    logger.error(`加载缓存失败：${e.message}`)
   }
+
   return []
 }
 
@@ -73,20 +71,17 @@ async function loadCache(ctx: Context): Promise<MemeInfo[]> {
  */
 async function saveCache(ctx: Context, data: MemeInfo[]): Promise<void> {
   const cachePath = getCachePath(ctx)
-  try {
-    const dir = path.dirname(cachePath)
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true })
-    }
-    lastCacheTime = Date.now()
-    fs.writeFileSync(cachePath, JSON.stringify({
-      time: lastCacheTime,
-      data: data
-    }, null, 2), 'utf-8')
-    logger.info(`已创建缓存文件：${data.length}项`)
-  } catch (e) {
-    logger.error(`创建缓存失败：${e.message}`)
+
+  const dir = path.dirname(cachePath)
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true })
   }
+  lastCacheTime = Date.now()
+  fs.writeFileSync(cachePath, JSON.stringify({
+    time: lastCacheTime,
+    data: data
+  }, null, 2), 'utf-8')
+  logger.info(`已创建缓存文件：${data.length}项`)
 }
 
 /**
@@ -95,20 +90,21 @@ async function saveCache(ctx: Context, data: MemeInfo[]): Promise<void> {
 async function refreshCache(ctx: Context, apiUrl: string): Promise<MemeInfo[]> {
   try {
     // 获取所有模板ID
-    const keys = await apiRequest<string[]>(`${apiUrl}/memes/keys`)
-    logger.info(`已获取模板ID: ${keys.length}个`)
+    const keys = await apiRequest<string[]>(`${apiUrl}/memes/keys`);
+    logger.info(`已获取模板ID: ${keys.length}个`);
+
     // 获取每个模板的详细信息
-    const templates: MemeInfo[] = []
+    const templates: MemeInfo[] = [];
     for (const key of keys) {
       try {
-        const info = await apiRequest<any>(`${apiUrl}/memes/${key}/info`)
+        const info = await apiRequest<any>(`${apiUrl}/memes/${key}/info`);
         templates.push({
           id: key,
           keywords: info.keywords ? (Array.isArray(info.keywords) ? info.keywords : [info.keywords]).filter(Boolean) : [],
           tags: info.tags && Array.isArray(info.tags) ? info.tags : [],
           params_type: info.params_type || {},
           ...info
-        })
+        });
       } catch (e) {
         logger.warn(`获取模板[${key}]信息失败：${e.message}`)
         templates.push({
@@ -116,16 +112,17 @@ async function refreshCache(ctx: Context, apiUrl: string): Promise<MemeInfo[]> {
           keywords: [],
           tags: [],
           params_type: {}
-        })
+        });
       }
     }
+
     // 保存缓存
-    await saveCache(ctx, templates)
-    memeCache = templates
-    return templates
+    await saveCache(ctx, templates);
+    memeCache = templates;
+    return templates;
   } catch (e) {
-    logger.error(`刷新缓存失败：${e.message}`)
-    return []
+    logger.error(`刷新缓存失败: ${e.message}`);
+    return [];
   }
 }
 
@@ -165,24 +162,19 @@ export async function getUserAvatar(session: any, userId?: string): Promise<stri
 /**
  * 自动撤回消息
  */
-export async function autoRecall(session: any, message: any, delay: number = 10000) {
-  if (!message || !session.bot?.deleteMessage) return
-  setTimeout(async () => {
-    try {
-      await session.bot.deleteMessage(session.channelId, message.id)
-    } catch (e) {
-      logger.debug(`撤回消息失败：${e}`)
-    }
-  }, delay)
-}
+export async function autoRecall(session: any, message: string | number, delay: number = 10000): Promise<any> {
+  if (!message) return null
 
-/**
- * 发送临时错误消息
- */
-async function sendTempError(session: any, message: string): Promise<null> {
-  const msg = await session.send(message);
-  autoRecall(session, msg);
-  return null;
+  try {
+    const msg = typeof message === 'string' ? await session.send(message) : message
+    setTimeout(async () => {
+      await session.bot?.deleteMessage(session.channelId, msg.toString())
+    }, delay)
+    return null
+  } catch (error) {
+    logger.debug(`消息处理失败：${error}`)
+    return null
+  }
 }
 
 /**
@@ -194,7 +186,7 @@ async function apiRequest<T = any>(url: string, options: {
   formData?: FormData,
   responseType?: 'json' | 'arraybuffer',
   timeout?: number
-} = {}): Promise<T> {
+} = {}): Promise<T | null> {
   const {
     method = 'get',
     data,
@@ -202,6 +194,7 @@ async function apiRequest<T = any>(url: string, options: {
     responseType = 'json',
     timeout = 8000
   } = options;
+
   try {
     const response = await axios({
       url,
@@ -212,33 +205,38 @@ async function apiRequest<T = any>(url: string, options: {
       timeout,
       validateStatus: () => true
     });
+
     // 处理非成功状态码
     if (response.status !== 200) {
+      let errorMessage = `HTTP状态码 ${response.status}`;
+
       if (responseType === 'arraybuffer') {
         try {
           const errText = Buffer.from(response.data).toString('utf-8');
           const errJson = JSON.parse(errText);
-          throw new Error(errJson.error || errJson.message || `HTTP状态码 ${response.status}`);
+          errorMessage = errJson.error || errJson.message || errorMessage;
         } catch (e) {
-          if (e instanceof SyntaxError) {
-            throw new Error(`HTTP状态码 ${response.status}`);
-          }
-          throw e;
+          // 解析失败就使用默认错误消息
         }
-      } else {
-        throw new Error(response.data?.error || response.data?.message || `HTTP状态码 ${response.status}`);
+      } else if (response.data) {
+        errorMessage = response.data.error || response.data.message || errorMessage;
       }
+
+      logger.warn(`API请求失败: ${url} - ${errorMessage}`);
+      return null;
     }
     return response.data as T;
   } catch (e) {
-    throw new Error(`API请求失败：${e.message}`);
+    // 记录详细错误
+    logger.error(`API请求异常: ${url} - ${e.message}`);
+    return null;
   }
 }
 
 /**
  * 从URL获取图片Blob
  */
-async function getImageBlob(url: string): Promise<Blob> {
+async function getImageBlob(url: string): Promise<Blob | null> {
   try {
     const response = await axios.get(url, {
       responseType: 'arraybuffer',
@@ -247,7 +245,8 @@ async function getImageBlob(url: string): Promise<Blob> {
     const buffer = Buffer.from(response.data);
     return new Blob([buffer], { type: response.headers['content-type'] || 'image/png' });
   } catch (e) {
-    throw new Error(`获取图片失败：${e.message}`);
+    logger.error(`获取图片失败: ${url} - ${e.message}`);
+    return null;
   }
 }
 
@@ -358,6 +357,10 @@ async function processArgs(session: any, args: h[]) {
       if (match.index > lastIndex) {
         const segment = text.substring(lastIndex, match.index);
         const segmentTexts = splitArgString(segment).filter(v => {
+          if (v.startsWith('-u')) {
+            imageInfos.push({ userId: v.slice(2) });
+            return false;
+          }
           if (v.startsWith('@')) {
             imageInfos.push({ userId: parseTarget(v) });
             return false;
@@ -374,6 +377,10 @@ async function processArgs(session: any, args: h[]) {
     if (!hasAtTag || lastIndex < text.length) {
       const remainingText = hasAtTag ? text.substring(lastIndex) : text;
       const bufferTexts = splitArgString(remainingText).filter(v => {
+        if (v.startsWith('-u')) {
+          imageInfos.push({ userId: v.slice(2) });
+          return false;
+        }
         if (v.startsWith('@')) {
           imageInfos.push({ userId: parseTarget(v) });
           return false;
@@ -410,101 +417,122 @@ async function processArgs(session: any, args: h[]) {
  * 处理模板参数并验证
  */
 async function processTemplateParameters(session: any, key: string, args: h[], apiUrl: string) {
-  try {
-    // 优先从缓存获取模板信息
-    let templateInfo;
-    const cachedTemplate = memeCache.find(t => t.id === key);
-    if (cachedTemplate) {
-      templateInfo = cachedTemplate;
-    } else {
-      templateInfo = await apiRequest(`${apiUrl}/memes/${key}/info`);
+  // 优先从缓存获取模板信息
+  let templateInfo;
+  const cachedTemplate = memeCache.find(t => t.id === key);
+  if (cachedTemplate) {
+    templateInfo = cachedTemplate;
+  } else {
+    templateInfo = await apiRequest(`${apiUrl}/memes/${key}/info`);
+    if (!templateInfo) {
+      return autoRecall(session, `获取模板信息失败: ${key}`);
     }
-    const paramsType = templateInfo.params_type || {};
-    const {
-      min_images: minImages = 0,
-      max_images: maxImages = 0,
-      min_texts: minTexts = 0,
-      max_texts: maxTexts = 0,
-      default_texts: defaultTexts = []
-    } = paramsType;
-    // 解析参数
-    const hArgs = args.map(arg => typeof arg === 'string' ? h('text', { content: arg }) : arg);
-    const { imageInfos, texts, options } = await processArgs(session, hArgs);
-    // 使用发送者头像
-    let processedImageInfos = [...imageInfos];
-    const autoUseAvatar = !!(
-      (!imageInfos.length && minImages === 1) ||
-      (imageInfos.length && imageInfos.length + 1 === minImages)
-    );
-    if (autoUseAvatar) {
-      processedImageInfos.unshift({ userId: session.userId });
-    }
-    // 使用默认文本
-    let processedTexts = [...texts];
-    if (!texts.length) {
-      processedTexts.push(...defaultTexts);
-    }
-    // 验证参数数量
-    const imagesCheck = checkAndFormatRange(processedImageInfos.length, minImages, maxImages);
-    if (!imagesCheck.valid) {
-      return sendTempError(session, `图片提供(${processedImageInfos.length}/${imagesCheck.display})张`);
-    }
-    const textsCheck = checkAndFormatRange(processedTexts.length, minTexts, maxTexts);
-    if (!textsCheck.valid) {
-      return sendTempError(session, `文本提供(${processedTexts.length}/${textsCheck.display})条`);
-    }
-    // 处理图片和用户信息
-    const images: Blob[] = [];
-    const userInfos: any[] = [];
-    for (const info of processedImageInfos) {
-      try {
-        if ('src' in info) {
-          const blob = await getImageBlob(info.src);
-          images.push(blob);
-          userInfos.push({});
-        } else if ('userId' in info) {
-          const avatarUrl = await getUserAvatar(session, info.userId);
-          const blob = await getImageBlob(avatarUrl);
-          images.push(blob);
-          userInfos.push({ name: info.userId });
-        }
-      } catch (e) {
-        throw new Error(`获取图片失败：${e.message}`);
-      }
-    }
-    // 处理模板特定参数
-    const templateOptions = processTemplateOptions(templateInfo, options);
-    return { templateInfo, images, texts: processedTexts, userInfos, templateOptions };
-  } catch (e) {
-    throw new Error(`处理模板参数失败：${e.message}`);
   }
+  const paramsType = templateInfo.params_type || {};
+  const {
+    min_images: minImages = 0,
+    max_images: maxImages = 0,
+    min_texts: minTexts = 0,
+    max_texts: maxTexts = 0,
+    default_texts: defaultTexts = []
+  } = paramsType;
+
+  // 解析参数
+  const hArgs = args.map(arg => typeof arg === 'string' ? h('text', { content: arg }) : arg);
+  const { imageInfos, texts, options } = await processArgs(session, hArgs);
+
+  // 使用发送者头像
+  let processedImageInfos = [...imageInfos];
+  const autoUseAvatar = !!(
+    (!imageInfos.length && minImages === 1) ||
+    (imageInfos.length && imageInfos.length + 1 === minImages)
+  );
+  if (autoUseAvatar) {
+    processedImageInfos.unshift({ userId: session.userId });
+  }
+
+  // 使用默认文本
+  let processedTexts = [...texts];
+  if (!texts.length) {
+    processedTexts.push(...defaultTexts);
+  }
+
+  // 验证参数数量
+  const imagesCheck = checkAndFormatRange(processedImageInfos.length, minImages, maxImages);
+  if (!imagesCheck.valid) {
+    return autoRecall(session, `图片提供(${processedImageInfos.length}/${imagesCheck.display})张`);
+  }
+
+  const textsCheck = checkAndFormatRange(processedTexts.length, minTexts, maxTexts);
+  if (!textsCheck.valid) {
+    return autoRecall(session, `文本提供(${processedTexts.length}/${textsCheck.display})条`);
+  }
+
+  // 处理图片和用户信息
+  const images: Blob[] = [];
+  const userInfos: any[] = [];
+
+  for (const info of processedImageInfos) {
+    if ('src' in info) {
+      const blob = await getImageBlob(info.src);
+      if (!blob) {
+        return autoRecall(session, `获取图片失败: ${info.src}`);
+      }
+      images.push(blob);
+      userInfos.push({});
+    } else if ('userId' in info) {
+      const avatarUrl = await getUserAvatar(session, info.userId);
+      const blob = await getImageBlob(avatarUrl);
+      if (!blob) {
+        return autoRecall(session, `获取用户头像失败: ${info.userId}`);
+      }
+      images.push(blob);
+      userInfos.push({ name: info.userId });
+    }
+  }
+
+  // 处理模板特定参数
+  const templateOptions = processTemplateOptions(templateInfo, options);
+  return { templateInfo, images, texts: processedTexts, userInfos, templateOptions };
 }
 
 /**
  * 生成表情包
  */
-async function generateMeme(apiUrl: string, key: string, images: Blob[], texts: string[], userInfos: any[], templateOptions: Record<string, any> = {}) {
+async function generateMeme(apiUrl: string, key: string, images: Blob[], texts: string[], userInfos: any[], templateOptions: Record<string, any> = {}): Promise<Buffer | null> {
   const formData = new FormData();
+
   // 添加文本和图片
   texts.forEach(text => formData.append('texts', text));
   images.forEach(img => formData.append('images', img));
+
   // 合并用户信息和模板特定参数
   const args = {
     user_infos: userInfos,
     ...templateOptions
   };
+
   // 添加其他参数
   formData.append('args', JSON.stringify(args));
+
   try {
     // 请求生成表情包
-    return await apiRequest<Buffer>(`${apiUrl}/memes/${key}/`, {
+    const result = await apiRequest<Buffer>(`${apiUrl}/memes/${key}/`, {
       method: 'post',
       formData,
       responseType: 'arraybuffer',
       timeout: 10000
     });
+
+    if (!result) {
+      logger.error(`生成表情失败: ${key} - API返回空结果`);
+      return null;
+    }
+
+    return result;
   } catch (e) {
-    throw new Error(`生成表情失败: ${e.message}`);
+    logger.error(`生成表情失败: ${key} - ${e.message}`);
+    return null;
   }
 }
 
@@ -514,6 +542,7 @@ async function generateMeme(apiUrl: string, key: string, images: Blob[], texts: 
 export function apply(ctx: Context, config: Config) {
   const apiUrl = !config.genUrl ? '' : config.genUrl.trim().replace(/\/+$/, '')
   const memeMaker = new MemeMaker(ctx)
+
   // 初始化缓存
   async function initCache() {
     if (!apiUrl) return
@@ -531,28 +560,37 @@ export function apply(ctx: Context, config: Config) {
   initCache()
 
   const meme = ctx.command('memes [key:string] [...texts:text]', '制作表情包')
-    .usage('输入类型并补充对应参数来生成对应表情\n使用"-xx"提供参数，"@用户"提供头像\n使用"."来调用子指令，如"memes.list"')
+    .usage('输入类型并补充对应参数来生成对应表情\n使用"-xx"提供参数，"@用户"提供用户头像\n子指令请使用"."触发，如"memes.list"')
     .example('memes ba_say -character=1 -position=right 你好 - 生成带参数的"心奈"说"你好"的表情')
     .example('memes eat @用户 - 使用指定用户头像生成"吃"表情')
     .action(async ({ session }, key, ...args) => {
       if (!key) {
-        return sendTempError(session, '请提供模板ID和文本参数');
+        return autoRecall(session, '请提供模板ID和文本参数');
       }
+
       try {
         // 处理模板参数
         const hArgs = args.map(arg => h('text', { content: arg }));
         const result = await processTemplateParameters(session, key, hArgs, apiUrl);
         if (!result) return;
+
         const { images, texts, userInfos, templateOptions } = result;
+
         // 生成表情包
+        logger.debug(`正在生成表情: ${key}, 文本数量: ${texts.length}, 图片数量: ${images.length}`);
         const imageBuffer = await generateMeme(apiUrl, key, images, texts, userInfos, templateOptions);
+
+        if (!imageBuffer) {
+          return autoRecall(session, `生成表情失败: ${key}`);
+        }
+
         // 返回图片
         const base64 = Buffer.from(imageBuffer).toString('base64');
         const dataUrl = `data:image/png;base64,${base64}`;
         return h('image', { url: dataUrl });
       } catch (e) {
         logger.error(`生成表情出错: ${e.message}`);
-        return sendTempError(session, `生成表情出错: ${e.message}`);
+        return autoRecall(session, `生成表情出错: ${e.message}`);
       }
     });
 
@@ -566,8 +604,13 @@ export function apply(ctx: Context, config: Config) {
         if (memeCache.length > 0) {
           keys = memeCache.map(t => t.id);
         } else {
-          keys = await apiRequest<string[]>(`${apiUrl}/memes/keys`);
+          const apiKeys = await apiRequest<string[]>(`${apiUrl}/memes/keys`);
+          if (!apiKeys) {
+            return autoRecall(session, `获取模板列表失败`);
+          }
+          keys = apiKeys;
         }
+
         // 分页处理
         const ITEMS_PER_PAGE = 10;
         const showAll = page === 'all';
@@ -575,37 +618,41 @@ export function apply(ctx: Context, config: Config) {
         const totalPages = Math.ceil(keys.length / ITEMS_PER_PAGE);
         const validPage = Math.max(1, Math.min(pageNum, totalPages));
         const pageKeys = showAll ? keys : keys.slice((validPage - 1) * ITEMS_PER_PAGE, validPage * ITEMS_PER_PAGE);
+
         // 获取当前页模板详情
         const templates = await Promise.all(pageKeys.map(async (key) => {
-          try {
-            // 优先从缓存获取
-            const cachedTemplate = memeCache.find(t => t.id === key);
-            if (cachedTemplate) {
-              const info = cachedTemplate;
-              const keywords = info.keywords || [];
-              const tags = info.tags || [];
-              const pt = info.params_type || {};
-              let imgReq = '';
-              let textReq = '';
-              if (pt.min_images === pt.max_images) {
-                imgReq = pt.min_images > 0 ? `图片${pt.min_images}` : '';
-              } else {
-                imgReq = pt.min_images > 0 || pt.max_images > 0 ? `图片${pt.min_images}-${pt.max_images}` : '';
-              }
-              if (pt.min_texts === pt.max_texts) {
-                textReq = pt.min_texts > 0 ? `文本${pt.min_texts}` : '';
-              } else {
-                textReq = pt.min_texts > 0 || pt.max_texts > 0 ? `文本${pt.min_texts}-${pt.max_texts}` : '';
-              }
-              return {
-                id: key,
-                keywords,
-                imgReq,
-                textReq,
-                tags
-              };
+          // 优先从缓存获取
+          const cachedTemplate = memeCache.find(t => t.id === key);
+          if (cachedTemplate) {
+            const info = cachedTemplate;
+            const keywords = info.keywords || [];
+            const tags = info.tags || [];
+            const pt = info.params_type || {};
+            let imgReq = '';
+            let textReq = '';
+            if (pt.min_images === pt.max_images) {
+              imgReq = pt.min_images > 0 ? `图片${pt.min_images}` : '';
             } else {
+              imgReq = pt.min_images > 0 || pt.max_images > 0 ? `图片${pt.min_images}-${pt.max_images}` : '';
+            }
+            if (pt.min_texts === pt.max_texts) {
+              textReq = pt.min_texts > 0 ? `文本${pt.min_texts}` : '';
+            } else {
+              textReq = pt.min_texts > 0 || pt.max_texts > 0 ? `文本${pt.min_texts}-${pt.max_texts}` : '';
+            }
+            return {
+              id: key,
+              keywords,
+              imgReq,
+              textReq,
+              tags
+            };
+          } else {
+            try {
               const info = await apiRequest(`${apiUrl}/memes/${key}/info`);
+              if (!info) {
+                return { id: key, keywords: [], imgReq: '', textReq: '', tags: [] };
+              }
               // 获取关键词和标签
               let keywords = info.keywords ? (Array.isArray(info.keywords) ? info.keywords : [info.keywords]) : [];
               let imgReq = '';
@@ -630,9 +677,9 @@ export function apply(ctx: Context, config: Config) {
                 textReq,
                 tags
               };
+            } catch (err) {
+              return { id: key, keywords: [], imgReq: '', textReq: '', tags: [] };
             }
-          } catch (err) {
-            return { id: key, keywords: [], imgReq: '', textReq: '', tags: [] };
           }
         }));
 
@@ -662,7 +709,8 @@ export function apply(ctx: Context, config: Config) {
         }).join('\n');
         return result;
       } catch (err) {
-        return sendTempError(session, `获取失败: ${err.message}`);
+        logger.error(`列出模板失败: ${err.message}`);
+        return autoRecall(session, `获取失败: ${err.message}`);
       }
     });
 
@@ -671,7 +719,7 @@ export function apply(ctx: Context, config: Config) {
     .example('memes.info ba_say - 查看"ba_say"模板的详细信息和参数')
     .action(async ({ session }, key) => {
       if (!key) {
-        return sendTempError(session, '请提供模板ID');
+        return autoRecall(session, '请提供模板ID');
       }
       try {
         // 优先从缓存获取
@@ -681,6 +729,9 @@ export function apply(ctx: Context, config: Config) {
           info = cachedTemplate;
         } else {
           info = await apiRequest(`${apiUrl}/memes/${key}/info`);
+          if (!info) {
+            return autoRecall(session, `获取模板信息失败: ${key}`);
+          }
         }
         const pt = info.params_type || {};
         const keywords = Array.isArray(info.keywords) ? info.keywords : [info.keywords].filter(Boolean);
@@ -759,7 +810,8 @@ export function apply(ctx: Context, config: Config) {
         }
         return lines.join('\n');
       } catch (err) {
-        return sendTempError(session, `获取模板信息失败: ${err.message}`);
+        logger.error(`获取模板信息失败: ${key} - ${err.message}`);
+        return autoRecall(session, `获取模板信息失败: ${err.message}`);
       }
     });
   meme.subcommand('.search <keyword:string>', '搜索表情模板')
@@ -767,7 +819,7 @@ export function apply(ctx: Context, config: Config) {
     .example('memes.search 吃 - 搜索包含"吃"关键词的表情模板')
     .action(async ({ session }, keyword) => {
       if (!keyword) {
-        return sendTempError(session, '请提供搜索关键词');
+        return autoRecall(session, '请提供搜索关键词');
       }
       try {
         if (memeCache.length === 0) {
@@ -793,17 +845,19 @@ export function apply(ctx: Context, config: Config) {
         });
         return `搜索结果（共${results.length}项）:\n` + resultLines.join('\n');
       } catch (err) {
-        return sendTempError(session, `搜索失败: ${err.message}`);
+        logger.error(`搜索模板失败: ${keyword} - ${err.message}`);
+        return autoRecall(session, `搜索失败: ${err.message}`);
       }
     });
   meme.subcommand('.refresh', '刷新表情模板缓存', { authority: 3 })
     .usage('手动刷新表情模板缓存数据')
     .action(async ({ session }) => {
       try {
-        await refreshCache(ctx, apiUrl);
-        return `已刷新缓存文件：${memeCache.length}项`;
+        const result = await refreshCache(ctx, apiUrl);
+        return `已刷新缓存文件：${result.length}项`;
       } catch (err) {
-        return sendTempError(session, `刷新缓存失败：${err.message}`);
+        logger.error(`刷新缓存失败: ${err.message}`);
+        return autoRecall(session, `刷新缓存失败：${err.message}`);
       }
     });
 
