@@ -20,11 +20,11 @@
 
 ### 基础命令
 
-- `memes [key] [...texts]` - 使用MemeGenerator API生成表情
+- `memes <key> [args]` - 使用模板ID或关键词生成表情
 - `memes.list [page]` - 列出可用模板列表(可用"all"参数查看全部)
 - `memes.info [key]` - 获取模板详细信息
 - `memes.search <keyword>` - 搜索表情模板
-- `memes.refresh` - 刷新表情模板缓存
+- `memes.refresh` - 刷新表情模板缓存（需要管理员权限）
 
 ### 内置模板
 
@@ -51,13 +51,19 @@
    memes play @用户 文本内容
    ```
 
-3. 生成内置模板表情：
+3. 查看模板详细信息：
+
+   ```text
+   memes.info ba_say
+   ```
+
+4. 生成内置模板表情：
 
    ```text
    memes.make.jiazi @用户
    ```
 
-4. 使用自定义API生成表情：
+5. 使用自定义API生成表情：
 
    ```text
    memes.api 吃 @用户1 @用户2
@@ -75,6 +81,17 @@
 
 - `loadApi`: 是否开启自定义API生成功能（默认关闭）
 - `genUrl`: MemeGenerator API地址（默认为"localhost:2233"）
+- `useMiddleware`: 是否开启中间件关键词匹配（默认关闭）
+- `requirePrefix`: 是否开启关键词指令前缀（默认开启）
+
+## 关键词匹配中间件
+
+当开启`useMiddleware`选项时，插件会自动监听聊天消息中的关键词并生成对应表情包：
+
+- 若`requirePrefix`开启，则只有以机器人指令前缀开头的消息才会触发关键词匹配
+- 若`requirePrefix`关闭，则所有消息都会尝试进行关键词匹配
+
+例如，当有人发送"摸 @某人"时，若"摸"是有效的表情关键词，将自动生成对应表情。
 
 ## 自定义API配置
 

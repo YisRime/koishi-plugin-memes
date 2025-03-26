@@ -122,7 +122,6 @@ export function apply(ctx: Context, config: Config) {
           keys = memeGenerator['memeCache'].map(t => t.id)
         } else {
           const apiKeys = await memeGenerator['apiRequest'](`${memeGenerator['apiUrl']}/memes/keys`)
-          if (!apiKeys) return autoRecall(session, `获取模板列表失败`)
           keys = apiKeys
         }
         // 获取模板详情
@@ -219,7 +218,7 @@ export function apply(ctx: Context, config: Config) {
           showAll
         }
       } catch (err) {
-        return autoRecall(session, `获取模板列表失败`)
+        return autoRecall(session, `获取模板列表失败: ${err.message}`)
       }
       const { totalTemplates, displayLines, totalPages, validPage, showAll } = result
       const header = showAll
@@ -243,34 +242,18 @@ export function apply(ctx: Context, config: Config) {
       }
       let result
       try {
-        // 查找模板
-        let template = memeGenerator['memeCache'].find(t => t.id === key)
-        if (!template) {
-          const matches = memeGenerator['memeCache'].filter(t =>
-            t.keywords.some(k => k.includes(key)) ||
-            t.tags.some(t => t.includes(key))
-          )
-          if (matches.length > 0) {
-            template = matches[0]
-            if (matches.length > 1) {
-              template = { ...template, _multipleMatches: matches.length }
-            }
-          }
-        }
-        // 获取信息
-        let info = template || await memeGenerator['apiRequest'](`${memeGenerator['apiUrl']}/memes/${key}/info`)
-        if (!info) return autoRecall(session, `未找到模板: ${key}`)
-        // 获取预览图
+        const template = await memeGenerator.findTemplate(key);
+        if (!template) return autoRecall(session, `未找到表情模板"${key}"`);
         let previewImage = null
         try {
           previewImage = await memeGenerator['apiRequest'](
-            `${memeGenerator['apiUrl']}/memes/${template?.id || key}/preview`,
+            `${memeGenerator['apiUrl']}/memes/${template.id}/preview`,
             { responseType: 'arraybuffer', timeout: 8000 }
           )
         } catch (previewErr) {
-          logger.warn(`获取预览图失败: ${template?.id || key}`)
+          logger.warn(`获取预览图失败: ${template.id}`)
         }
-        result = { info, previewImage, searchKey: key, templateId: template?.id || key }
+        result = { info: template, previewImage, searchKey: key, templateId: template.id }
       } catch (err) {
         return autoRecall(session, `未找到模板: ${key} - ${err.message}`)
       }
@@ -385,32 +368,27 @@ export function apply(ctx: Context, config: Config) {
     .example('memes.search 吃 - 搜索包含"吃"关键词的表情模板')
     .action(async ({ session }, keyword) => {
       if (!keyword) {
-        return autoRecall(session, '请提供搜索关键词')
+        return autoRecall(session, '请提供关键词')
       }
-      let results
       try {
-        results = memeGenerator['memeCache'].filter(template =>
-          template.keywords.some(k => k.includes(keyword)) ||
-          template.tags.some(t => t.includes(keyword)) ||
-          template.id.includes(keyword)
-        )
+        const results = await memeGenerator.matchTemplates(keyword);
+        if (!results || results.length === 0) {
+          return autoRecall(session, `未找到有关"${keyword}"的表情模板`)
+        }
+        const resultLines = results.map(t => {
+          let line = `${t.id}`
+          if (t.keywords?.length > 0) {
+            line += `|${t.keywords.join(',')}`
+          }
+          if (t.tags?.length > 0) {
+            line += ` #${t.tags.join(' #')}`
+          }
+          return line
+        })
+        return `搜索结果（共${results.length}项）:\n` + resultLines.join('\n')
       } catch (err) {
-        return autoRecall(session, `搜索失败: ${err.message}`)
+        return autoRecall(session, `未找到模板: ${err.message}`)
       }
-      if (!results || results.length === 0) {
-        return `未找到表情模板"${keyword}"`
-      }
-      const resultLines = results.map(t => {
-        let line = `${t.id}`
-        if (t.keywords?.length > 0) {
-          line += `|${t.keywords.join(',')}`
-        }
-        if (t.tags?.length > 0) {
-          line += ` #${t.tags.join(' #')}`
-        }
-        return line
-      })
-      return `搜索结果（共${results.length}项）:\n` + resultLines.join('\n')
     })
 
   /**
@@ -427,42 +405,36 @@ export function apply(ctx: Context, config: Config) {
       }
     })
 
-  // 添加关键词触发中间件
+  // 关键词触发中间件
   if (config.useMiddleware) {
     ctx.middleware(async (session, next) => {
-      const content = session.content.trim()
-      // 处理前缀逻辑
-      let actualContent = content
+      const content = session.content.trim();
+      // 处理前缀并获取实际内容
+      let actualContent = content;
       if (config.requirePrefix) {
-        const prefixes = ctx.root.config.prefix || ['']
-        const prefixList = Array.isArray(prefixes) ? prefixes : [prefixes]
-        // 检查是否匹配前缀
-        let matched = false
-        for (const prefix of prefixList) {
-          if (prefix && content.startsWith(prefix)) {
-            actualContent = content.slice(prefix.length).trim()
-            matched = true
-            break
-          }
+        const prefixes = Array.isArray(ctx.root.config.prefix) ?
+          ctx.root.config.prefix : [ctx.root.config.prefix || ''];
+        // 寻找匹配前缀
+        const matchedPrefix = prefixes.find(prefix => prefix && content.startsWith(prefix));
+        if (prefixes.some(p => p) && !matchedPrefix) {
+          return next();
         }
-        if (prefixList.some(p => p) && !matched) {
-          return next()
+        // 去除前缀
+        if (matchedPrefix) {
+          actualContent = content.slice(matchedPrefix.length).trim();
         }
       }
-      // 提取关键词
-      const spaceIndex = actualContent.indexOf(' ')
-      const possibleKey = spaceIndex > 0 ? actualContent.slice(0, spaceIndex) : actualContent
-      const argsText = spaceIndex > 0 ? actualContent.slice(spaceIndex + 1) : ''
-      // 查找匹配模板
-      const memeCache = memeGenerator['memeCache']
-      const matchedTemplate = memeCache.find(t =>
-        t.id === possibleKey || t.keywords?.some(k => k === possibleKey)
-      )
+      // 提取关键词和参数
+      const match = actualContent.match(/^(\S+)(?:\s+(.*))?$/);
+      if (!match) return next();
+      const [, possibleKey, argsText = ''] = match;
+      // 查找模板
+      const matchedTemplate = await memeGenerator.findTemplate(possibleKey, false);
       if (matchedTemplate) {
-        const elements = argsText ? [h('text', { content: argsText })] : []
-        return memeGenerator.generateMeme(session, possibleKey, elements)
+        const elements = argsText ? [h('text', { content: argsText })] : [];
+        return memeGenerator.generateMeme(session, possibleKey, elements);
       }
-      return next()
+      return next();
     })
   }
 

@@ -266,11 +266,80 @@ export class MemeGenerator {
     const checkCount = (count: number, min: number, max: number, type: string): void => {
       if ((min != null && count < min) || (max != null && min != null && count > max)) {
         const range = formatRange(min, max);
-        throw new Error(`${type}数量不匹配：需要${range}${type === '图片' ? '张' : '条'}，当前${count}${type === '图片' ? '张' : '条'}`);
+        throw new Error(`当前${count}${type === '图片' ? '张' : '条'}${type}，需要${range}${type === '图片' ? '张' : '条'}${type}`);
       }
     }
     checkCount(imageCount, minImages, maxImages, '图片');
     checkCount(textCount, minTexts, maxTexts, '文本');
+  }
+
+  /**
+   * 匹配模板关键词
+   * @private
+   * @param {string} key - 搜索关键词
+   * @returns {MemeInfo[]} 按匹配度排序的模板数组
+   */
+  matchTemplates(key: string): MemeInfo[] {
+    if (!key || !this.memeCache.length) return [];
+    const results: Array<{template: MemeInfo, priority: number}> = [];
+    for (const template of this.memeCache) {
+      let priority = 99; // 默认最低优先级
+      if (template.id === key || template.keywords?.some(k => k === key)) {
+        priority = 1; // 完全匹配
+      } else if (template.keywords?.some(k => k.includes(key))) {
+        priority = 2; // 关键词包含搜索词
+      } else if (template.keywords?.some(k => key.includes(k))) {
+        priority = 3; // 搜索词包含关键词
+      } else if (template.id.includes(key)) {
+        priority = 4; // ID包含搜索词
+      } else if (template.tags?.some(tag => tag === key || tag.includes(key))) {
+        priority = 5; // 标签匹配
+      } else {
+        continue;
+      }
+      results.push({template, priority});
+    }
+    // 按优先级排序（从低到高）并提取模板对象
+    return results
+      .sort((a, b) => a.priority - b.priority)
+      .map(result => result.template);
+  }
+
+  /**
+   * 查找表情包模板
+   * @param {string} key - 模板ID或关键词
+   * @param {boolean} [fuzzy=true] - 是否进行模糊匹配
+   * @returns {Promise<MemeInfo|null>} 找到的模板信息或null
+   */
+  async findTemplate(key: string, fuzzy: boolean = true): Promise<MemeInfo | null> {
+    const matchedTemplates = fuzzy ? this.matchTemplates(key) :
+      this.memeCache.filter(t => t.id === key || t.keywords?.some(k => k === key));
+    // 返回最匹配的
+    if (matchedTemplates.length > 0) {
+      return matchedTemplates[0];
+    }
+    // 尝试从API获取
+    if (this.apiUrl) {
+      try {
+        const info = await this.apiRequest<any>(`${this.apiUrl}/memes/${key}/info`);
+        if (info) {
+          this.refreshCache().catch(e => {
+            this.logger.warn(`刷新缓存失败: ${e.message}`);
+          });
+          return {
+            id: key,
+            keywords: info.keywords ?
+              (Array.isArray(info.keywords) ? info.keywords : [info.keywords]).filter(Boolean) : [],
+            tags: info.tags && Array.isArray(info.tags) ? info.tags : [],
+            params_type: info.params_type || {},
+            ...(info || {})
+          };
+        }
+      } catch (e) {
+        this.logger.warn(`从API获取模板[${key}]信息失败：${e.message}`);
+      }
+    }
+    return null;
   }
 
   /**
@@ -283,31 +352,17 @@ export class MemeGenerator {
    */
   async generateMeme(session: any, key: string, args: h[]) {
     try {
-      // 获取模板信息
-      let templateInfo = this.memeCache.find(t =>
-        t.id === key || t.keywords?.some(k => k === key)
-      )
-      // 模糊匹配
-      if (!templateInfo && this.memeCache.length > 0) {
-        const matchingTemplates = this.memeCache.filter(t =>
-          t.id.includes(key) ||
-          t.keywords?.some(k => k.includes(key)) ||
-          t.tags?.some(t => t.includes(key))
-        )
-        if (matchingTemplates.length > 0) {
-          templateInfo = matchingTemplates[0]
-        }
-      }
+      // 使用优化后的方法获取模板信息
+      const templateInfo = await this.findTemplate(key);
       if (!templateInfo) {
-        templateInfo = await this.apiRequest(`${this.apiUrl}/memes/${key}/info`)
-        if (!templateInfo) return autoRecall(session, `获取模板信息失败: ${key}`)
+        return autoRecall(session, `获取模板信息失败: ${key}`);
       }
-      const tempId = templateInfo.id || key
+      const tempId = templateInfo.id || key;
       const {
         min_images = 0, max_images = 0,
         min_texts = 0, max_texts = 0,
         default_texts = []
-      } = templateInfo.params_type || {}
+      } = templateInfo.params_type || {};
       // 解析参数
       const { imageInfos: origImageInfos, texts: origTexts, options } =
         await this.parseArgs(session, args, templateInfo)
