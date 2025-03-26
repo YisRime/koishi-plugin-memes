@@ -419,10 +419,9 @@ export class MemeGenerator {
   private async parseArgs(session: any, args: h[], templateInfo: MemeInfo): Promise<ResolvedArgs> {
     const imageInfos: ImageFetchInfo[] = []
     const texts: string[] = []
-    let options: Record<string, any> = {}
-    let allText = ''
-
+    const options: Record<string, any> = {}
     const processedAtIds = new Set<string>()
+    let allText = ''
     // 处理用户ID
     const processUserId = (userId: string): boolean => {
       if (userId && !processedAtIds.has(userId)) {
@@ -432,57 +431,42 @@ export class MemeGenerator {
       }
       return false
     }
-    // 添加引用消息中的图片
+    // 处理引用消息中的图片
     if (session.quote?.elements) {
-      const processElement = (e: h) => {
-        if (e.children?.length) e.children.forEach(processElement)
+      const processQuoteElement = (e: h) => {
         if (e.type === 'img' && e.attrs.src) imageInfos.push({ src: e.attrs.src })
+        if (e.children?.length) e.children.forEach(processQuoteElement)
       }
-      session.quote.elements.forEach(processElement)
+      session.quote.elements.forEach(processQuoteElement)
     }
-    // 提取文本和元素
-    const extractText = (e: h): void => {
-      if (e.type === 'text' && e.attrs.content) allText += e.attrs.content + ' '
-      else if (e.type === 'at' && e.attrs.id) processUserId(e.attrs.id)
-      else if (e.type === 'img' && e.attrs.src) imageInfos.push({ src: e.attrs.src })
-      if (e.children?.length) e.children.forEach(extractText)
+    // 处理文本内容中的at标签
+    const processTextContent = (content: string): string => {
+      const atTagRegex = /<at id=['"]?([0-9]+)['"]?\/>/g
+      return content.replace(atTagRegex, (match, userId) => {
+        processUserId(userId)
+        return ' '
+      })
     }
-    args.forEach(extractText)
-    // 处理提取的文本
+    // 递归处理元素
+    const processElement = (e: h): void => {
+      if (e.type === 'text' && e.attrs.content) {
+        allText += processTextContent(e.attrs.content) + ' '
+      } else if (e.type === 'at' && e.attrs.id) {
+        processUserId(e.attrs.id)
+      } else if (e.type === 'img' && e.attrs.src) {
+        imageInfos.push({ src: e.attrs.src })
+      }
+      if (e.children?.length) e.children.forEach(processElement)
+    }
+    // 处理所有参数元素
+    args.forEach(processElement)
+    // 解析文本参数
     if (allText.trim()) {
-      const splitText = (text: string): string[] => {
-        const result: string[] = []
-        let current = ''
-        let inQuote = false
-        let quoteChar = ''
-        for (let i = 0; i < text.length; i++) {
-          const char = text[i]
-          if ((char === '"' || char === "'") && (i === 0 || text[i-1] !== '\\')) {
-            if (!inQuote) {
-              inQuote = true
-              quoteChar = char
-            } else if (char === quoteChar) {
-              inQuote = false
-              quoteChar = ''
-            } else {
-              current += char
-            }
-          } else if (char === ' ' && !inQuote) {
-            if (current) {
-              result.push(current)
-              current = ''
-            }
-          } else {
-            current += char
-          }
-        }
-        if (current) result.push(current)
-        return result
-      }
-      const splitArgs = splitText(allText.trim())
-      splitArgs.forEach(part => {
-        if (part.startsWith('-')) {
-          const optMatch = part.match(/^-([a-zA-Z0-9_-]+)(?:=(.*))?$/)
+      const tokens = allText.trim().match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) || []
+      tokens.forEach(token => {
+        // 选项参数
+        if (token.startsWith('-')) {
+          const optMatch = token.match(/^-([a-zA-Z0-9_-]+)(?:=(.*))?$/)
           if (optMatch) {
             const [, key, rawValue = 'true'] = optMatch
             let value: any = rawValue
@@ -493,19 +477,20 @@ export class MemeGenerator {
             options[key] = value
           }
         }
-        else if (part.startsWith('<at')) {
-          const userId = parseTarget(part)
-          processUserId(userId)
-        }
-        else if (part.startsWith('@')) {
-          const match = part.match(/@(\d+)/)
-          if (match && match[1]) {
-            processUserId(match[1])
-          } else {
-            texts.push(part)
+        // at文本
+        else if (token.startsWith('<at') || token.startsWith('@')) {
+          const userId = token.startsWith('<at') ? parseTarget(token) : token.match(/@(\d+)/)?.[1]
+          if (userId) {
+            processUserId(userId)
+          } else if (token.startsWith('@')) {
+            texts.push(token)
           }
         }
-        else texts.push(part)
+        // 普通文本
+        else {
+          const trimmedToken = token.replace(/^(['"])(.*)\1$/, '$2')
+          texts.push(trimmedToken)
+        }
       })
     }
     // 转换选项类型
