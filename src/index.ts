@@ -14,13 +14,19 @@ export const logger = new Logger('memes')
 export interface Config {
   loadApi: boolean
   genUrl: string
+  useMiddleware: boolean
+  requirePrefix: boolean
 }
 
 export const Config: Schema<Config> = Schema.object({
   loadApi: Schema.boolean()
     .description('开启自定义 API 生成功能').default(false),
   genUrl: Schema.string()
-    .description('MemeGenerator API 配置').default('http://localhost:2233')
+    .description('MemeGenerator API 配置').default('http://localhost:2233'),
+  useMiddleware: Schema.boolean()
+    .description('开启中间件关键词匹配').default(false),
+  requirePrefix: Schema.boolean()
+    .description('开启关键词指令前缀').default(true)
 })
 
 /**
@@ -420,6 +426,45 @@ export function apply(ctx: Context, config: Config) {
         return autoRecall(session, `刷新缓存失败：${err.message}`)
       }
     })
+
+  // 添加关键词触发中间件
+  if (config.useMiddleware) {
+    ctx.middleware(async (session, next) => {
+      const content = session.content.trim()
+      // 处理前缀逻辑
+      let actualContent = content
+      if (config.requirePrefix) {
+        const prefixes = ctx.root.config.prefix || ['']
+        const prefixList = Array.isArray(prefixes) ? prefixes : [prefixes]
+        // 检查是否匹配前缀
+        let matched = false
+        for (const prefix of prefixList) {
+          if (prefix && content.startsWith(prefix)) {
+            actualContent = content.slice(prefix.length).trim()
+            matched = true
+            break
+          }
+        }
+        if (prefixList.some(p => p) && !matched) {
+          return next()
+        }
+      }
+      // 提取关键词
+      const spaceIndex = actualContent.indexOf(' ')
+      const possibleKey = spaceIndex > 0 ? actualContent.slice(0, spaceIndex) : actualContent
+      const argsText = spaceIndex > 0 ? actualContent.slice(spaceIndex + 1) : ''
+      // 查找匹配模板
+      const memeCache = memeGenerator['memeCache']
+      const matchedTemplate = memeCache.find(t =>
+        t.id === possibleKey || t.keywords?.some(k => k === possibleKey)
+      )
+      if (matchedTemplate) {
+        const elements = argsText ? [h('text', { content: argsText })] : []
+        return memeGenerator.generateMeme(session, possibleKey, elements)
+      }
+      return next()
+    })
+  }
 
   // 注册图片生成相关命令
   memeMaker.registerCommands(meme)
