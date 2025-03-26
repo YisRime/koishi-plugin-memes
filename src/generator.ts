@@ -284,7 +284,20 @@ export class MemeGenerator {
   async generateMeme(session: any, key: string, args: h[]) {
     try {
       // 获取模板信息
-      let templateInfo = this.memeCache.find(t => t.id === key || t.keywords?.some(k => k === key))
+      let templateInfo = this.memeCache.find(t =>
+        t.id === key || t.keywords?.some(k => k === key)
+      )
+      // 模糊匹配
+      if (!templateInfo && this.memeCache.length > 0) {
+        const matchingTemplates = this.memeCache.filter(t =>
+          t.id.includes(key) ||
+          t.keywords?.some(k => k.includes(key)) ||
+          t.tags?.some(t => t.includes(key))
+        )
+        if (matchingTemplates.length > 0) {
+          templateInfo = matchingTemplates[0]
+        }
+      }
       if (!templateInfo) {
         templateInfo = await this.apiRequest(`${this.apiUrl}/memes/${key}/info`)
         if (!templateInfo) return autoRecall(session, `获取模板信息失败: ${key}`)

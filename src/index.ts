@@ -90,12 +90,12 @@ export function apply(ctx: Context, config: Config) {
    * 主命令: 制作表情包
    */
   const meme = ctx.command('memes <key:string> [args:text]', '制作表情包')
-    .usage('输入模板ID并补充参数来生成表情包\n格式: memes 模板ID 文本内容 -参数=值\n"@用户"可添加用户头像，"-参数"设置选项\n使用"."触发子指令，如"memes.list"查看模板列表')
-    .example('memes ba_say 你好 -character=1 -position=right - 生成"心奈"右侧说"你好"的表情')
-    .example('memes petpet @用户 -circle=true - 使用指定用户头像生成圆形摸摸头表情')
+    .usage('输入模板ID或关键词并添加参数和选项来生成表情包\n例:memes 模板ID/关键词 文本 -参数=值\n可引用添加图片或@用户添加头像\n使用"."触发子指令:memes.list - 查看列表')
+    .example('memes ba_say 你好 -character=1 - 使用模板ID"ba_say"生成"心奈说:你好"的表情')
+    .example('memes 摸 @用户 - 使用关键词"摸"生成摸头表情')
     .action(async ({ session }, key, args) => {
       if (!key) {
-        return autoRecall(session, '请提供模板ID和文本参数')
+        return autoRecall(session, '请提供模板ID或关键词')
       }
       const elements = args ? [h('text', { content: args })] : []
       return memeGenerator.generateMeme(session, key, elements)
@@ -230,7 +230,7 @@ export function apply(ctx: Context, config: Config) {
   meme.subcommand('.info [key:string]', '获取模板详细信息')
     .usage('查看指定模板的详细信息和参数')
     .example('memes.info ba_say - 查看"ba_say"模板的详细信息和参数')
-    .example('memes.info 吃 - 查看"吃"模板的详细信息和参数')
+    .example('memes.info 吃 - 查看包含"吃"关键词的模板的详细信息和参数')
     .action(async ({ session }, key) => {
       if (!key) {
         return autoRecall(session, '请提供模板ID或关键词')
