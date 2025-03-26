@@ -91,6 +91,15 @@ export function apply(ctx: Context, config: Config) {
   const apiUrl = !config.genUrl ? '' : config.genUrl.trim().replace(/\/+$/, '')
   const memeGenerator = new MemeGenerator(ctx, logger, apiUrl)
   const memeMaker = new MemeMaker(ctx)
+  let keywordToTemplateMap = new Map<string, string>();
+  let allKeywords: string[] = [];
+
+  const updateKeywordMappings = () => {
+    if (keywordToTemplateMap.size === 0) {
+      keywordToTemplateMap = memeGenerator.getAllKeywordMappings();
+      allKeywords = Array.from(keywordToTemplateMap.keys());
+    }
+  };
 
   /**
    * 主命令: 制作表情包
@@ -240,124 +249,118 @@ export function apply(ctx: Context, config: Config) {
       if (!key) {
         return autoRecall(session, '请提供模板ID或关键词')
       }
-      let result
       try {
         const template = await memeGenerator.findTemplate(key);
         if (!template) return autoRecall(session, `未找到表情模板"${key}"`);
-        let previewImage = null
+        const templateId = template.id
+        const response = []
+        // 获取预览图片
         try {
-          previewImage = await memeGenerator['apiRequest'](
-            `${memeGenerator['apiUrl']}/memes/${template.id}/preview`,
+          const previewImage = await memeGenerator['apiRequest'](
+            `${memeGenerator['apiUrl']}/memes/${templateId}/preview`,
             { responseType: 'arraybuffer', timeout: 8000 }
           )
-        } catch (previewErr) {
-          logger.warn(`获取预览图失败: ${template.id}`)
-        }
-        result = { info: template, previewImage, searchKey: key, templateId: template.id }
-      } catch (err) {
-        return autoRecall(session, `未找到模板: ${key} - ${err.message}`)
-      }
-      const { info, previewImage, templateId } = result
-      const keywords = Array.isArray(info.keywords) ? info.keywords : [info.keywords].filter(Boolean)
-      // 标题信息
-      let headerLines = []
-      headerLines.push(`模板"${keywords.join(', ')}(${templateId})"详细信息:`)
-      const detailLines = []
-      const pt = info.params_type || {}
-      // 参数需求
-      if (info.tags?.length) headerLines.push(`标签: ${info.tags.join(', ')}`)
-      detailLines.push('需要参数:')
-      detailLines.push(`- 图片: ${pt.min_images || 0}${pt.max_images !== pt.min_images ? `-${pt.max_images}` : ''}张`)
-      detailLines.push(`- 文本: ${pt.min_texts || 0}${pt.max_texts !== pt.min_texts ? `-${pt.max_texts}` : ''}条`)
-      if (pt.default_texts?.length) detailLines.push(`- 默认文本: ${pt.default_texts.join(', ')}`)
-      // 其他参数
-      if (pt.args_type?.args_model?.properties) {
-        detailLines.push('其他参数:')
-        const properties = pt.args_type.args_model.properties
-        const definitions = pt.args_type.args_model.$defs || {}
-        // 处理顶层属性
-        for (const key in properties) {
-          if (key === 'user_infos') continue
-          const prop = properties[key]
-          let propDesc = `- ${key}`
-          // 添加类型信息
-          if (prop.type) {
-            let typeStr = prop.type
-            if (prop.type === 'array' && prop.items?.$ref) {
-              const refTypeName = prop.items.$ref.replace('#/$defs/', '').split('/')[0]
-              typeStr = `${prop.type}<${refTypeName}>`
-            }
-            propDesc += ` (${typeStr})`
+          if (previewImage) {
+            const base64 = Buffer.from(previewImage).toString('base64')
+            response.push(h('image', { url: `data:image/png;base64,${base64}` }))
           }
-          // 添加默认值和描述
-          if (prop.default !== undefined) propDesc += ` 默认值: ${JSON.stringify(prop.default)}`
-          if (prop.description) propDesc += ` - ${prop.description}`
-          if (prop.enum?.length) propDesc += ` [可选值: ${prop.enum.join(', ')}]`
-          detailLines.push(propDesc)
+        } catch (previewErr) {
+          logger.warn(`获取预览图失败: ${templateId}`)
         }
-        // 展示类型定义
-        if (Object.keys(definitions).length > 0) {
-          detailLines.push('类型定义:')
-          for (const typeName in definitions) {
-            detailLines.push(`- ${typeName}:`)
-            const typeDef = definitions[typeName]
-            if (typeDef.properties) {
-              for (const propName in typeDef.properties) {
-                const prop = typeDef.properties[propName]
-                let propDesc = `  • ${propName}`
-                if (prop.type) propDesc += ` (${prop.type})`
-                if (prop.default !== undefined) propDesc += ` 默认值: ${JSON.stringify(prop.default)}`
-                if (prop.description) propDesc += ` - ${prop.description}`
-                if (prop.enum?.length) propDesc += ` [可选值: ${prop.enum.join(', ')}]`
-                detailLines.push(propDesc)
+        // 详细信息
+        const outputContent = []
+        const keywords = Array.isArray(template.keywords) ? template.keywords : [template.keywords].filter(Boolean)
+        // 标题信息与参数需求
+        outputContent.push(`模板"${keywords.join(', ')}(${templateId})"详细信息:`)
+        if (template.tags?.length) outputContent.push(`标签: ${template.tags.join(', ')}`)
+        const pt = template.params_type || {}
+        outputContent.push('需要参数:')
+        outputContent.push(`- 图片: ${pt.min_images || 0}${pt.max_images !== pt.min_images ? `-${pt.max_images}` : ''}张`)
+        outputContent.push(`- 文本: ${pt.min_texts || 0}${pt.max_texts !== pt.min_texts ? `-${pt.max_texts}` : ''}条`)
+        if (pt.default_texts?.length) outputContent.push(`- 默认文本: ${pt.default_texts.join(', ')}`)
+        // 其他参数
+        if (pt.args_type?.args_model?.properties) {
+          outputContent.push('其他参数:')
+          const properties = pt.args_type.args_model.properties
+          const definitions = pt.args_type.args_model.$defs || {}
+          // 处理顶层属性
+          for (const key in properties) {
+            if (key === 'user_infos') continue
+            const prop = properties[key]
+            let propDesc = `- ${key}`
+            // 添加类型信息
+            if (prop.type) {
+              let typeStr = prop.type
+              if (prop.type === 'array' && prop.items?.$ref) {
+                const refTypeName = prop.items.$ref.replace('#/$defs/', '').split('/')[0]
+                typeStr = `${prop.type}<${refTypeName}>`
+              }
+              propDesc += ` (${typeStr})`
+            }
+            // 添加默认值和描述
+            if (prop.default !== undefined) propDesc += ` 默认值: ${JSON.stringify(prop.default)}`
+            if (prop.description) propDesc += ` - ${prop.description}`
+            if (prop.enum?.length) propDesc += ` [可选值: ${prop.enum.join(', ')}]`
+            outputContent.push(propDesc)
+          }
+          // 展示类型定义
+          if (Object.keys(definitions).length > 0) {
+            outputContent.push('类型定义:')
+            for (const typeName in definitions) {
+              outputContent.push(`- ${typeName}:`)
+              const typeDef = definitions[typeName]
+              if (typeDef.properties) {
+                for (const propName in typeDef.properties) {
+                  const prop = typeDef.properties[propName]
+                  let propDesc = `  • ${propName}`
+                  if (prop.type) propDesc += ` (${prop.type})`
+                  if (prop.default !== undefined) propDesc += ` 默认值: ${JSON.stringify(prop.default)}`
+                  if (prop.description) propDesc += ` - ${prop.description}`
+                  if (prop.enum?.length) propDesc += ` [可选值: ${prop.enum.join(', ')}]`
+                  outputContent.push(propDesc)
+                }
               }
             }
           }
         }
+        // 命令行参数
+        if (pt.args_type?.parser_options?.length) {
+          outputContent.push('命令行参数:')
+          pt.args_type.parser_options.forEach(opt => {
+            const names = opt.names.join(', ')
+            const argInfo = opt.args?.length ?
+              opt.args.map(arg => {
+                let argDesc = arg.name
+                if (arg.value) argDesc += `:${arg.value}`
+                if (arg.default !== null && arg.default !== undefined) argDesc += `=${arg.default}`
+                return argDesc
+              }).join(' ') : ''
+            outputContent.push(`- ${names} ${argInfo}${opt.help_text ? ` - ${opt.help_text}` : ''}`)
+          })
+        }
+        // 参数示例
+        if (pt.args_type?.args_examples?.length) {
+          outputContent.push('参数示例:')
+          pt.args_type.args_examples.forEach((example, i) => {
+            outputContent.push(`- 示例${i+1}: ${JSON.stringify(example)}`)
+          })
+        }
+        // 快捷指令
+        if (template.shortcuts?.length) {
+          outputContent.push('快捷指令:')
+          template.shortcuts.forEach(shortcut => {
+            outputContent.push(`- ${shortcut.humanized || shortcut.key}${shortcut.args?.length ? ` (参数: ${shortcut.args.join(' ')})` : ''}`)
+          })
+        }
+        // 创建和修改时间
+        if (template.date_created || template.date_modified) {
+          outputContent.push(`创建时间: ${template.date_created}\n修改时间: ${template.date_modified}`)
+        }
+        response.push(h('text', { content: outputContent.join('\n') }))
+        return response
+      } catch (err) {
+        return autoRecall(session, `未找到模板: ${key} - ${err.message}`)
       }
-      // 命令行参数
-      if (pt.args_type?.parser_options?.length) {
-        detailLines.push('命令行参数:')
-        pt.args_type.parser_options.forEach(opt => {
-          const names = opt.names.join(', ')
-          const argInfo = opt.args?.length ?
-            opt.args.map(arg => {
-              let argDesc = arg.name
-              if (arg.value) argDesc += `:${arg.value}`
-              if (arg.default !== null && arg.default !== undefined) argDesc += `=${arg.default}`
-              return argDesc
-            }).join(' ') : ''
-          detailLines.push(`- ${names} ${argInfo}${opt.help_text ? ` - ${opt.help_text}` : ''}`)
-        })
-      }
-      // 参数示例和快捷指令
-      if (pt.args_type?.args_examples?.length) {
-        detailLines.push('参数示例:')
-        pt.args_type.args_examples.forEach((example, i) => {
-          detailLines.push(`- 示例${i+1}: ${JSON.stringify(example)}`)
-        })
-      }
-      if (info.shortcuts?.length) {
-        detailLines.push('快捷指令:')
-        info.shortcuts.forEach(shortcut => {
-          detailLines.push(`- ${shortcut.humanized || shortcut.key}${shortcut.args?.length ? ` (参数: ${shortcut.args.join(' ')})` : ''}`)
-        })
-      }
-      // 时间信息
-      if (info.date_created || info.date_modified) {
-        detailLines.push(`创建时间: ${info.date_created}\n修改时间: ${info.date_modified}`)
-      }
-      // 返回文本信息和预览图
-      if (previewImage) {
-        const base64 = Buffer.from(previewImage).toString('base64')
-        return [
-          h('text', { content: headerLines.join('\n') }),
-          h('image', { url: `data:image/png;base64,${base64}` }),
-          h('text', { content: '\n' + detailLines.join('\n') })
-        ];
-      }
-      // 没有预览图时返回完整文本
-      return [...headerLines, ...detailLines].join('\n');
     })
 
   /**
@@ -376,12 +379,9 @@ export function apply(ctx: Context, config: Config) {
           return autoRecall(session, `未找到有关"${keyword}"的表情模板`)
         }
         const resultLines = results.map(t => {
-          let line = `${t.id}`
-          if (t.keywords?.length > 0) {
-            line += `|${t.keywords.join(',')}`
-          }
+          let line = `${t.keywords}(${t.id})`
           if (t.tags?.length > 0) {
-            line += ` #${t.tags.join(' #')}`
+            line += ` #${t.tags.join('#')}`
           }
           return line
         })
@@ -398,44 +398,45 @@ export function apply(ctx: Context, config: Config) {
     .usage('手动刷新表情模板缓存数据')
     .action(async ({ session }) => {
       try {
-        const result = await memeGenerator.refreshCache()
-        return `已刷新缓存文件：${result.length}项`
+        const result = await memeGenerator.refreshCache();
+        if (config.useMiddleware) {
+          keywordToTemplateMap.clear();
+          allKeywords = [];
+        }
+        return `已刷新缓存文件：${result.length}项`;
       } catch (err) {
-        return autoRecall(session, `刷新缓存失败：${err.message}`)
+        return autoRecall(session, `刷新缓存失败：${err.message}`);
       }
     })
 
   // 关键词触发中间件
   if (config.useMiddleware) {
     ctx.middleware(async (session, next) => {
-      const content = session.content.trim();
-      // 处理前缀并获取实际内容
-      let actualContent = content;
+      if (allKeywords.length === 0) {
+        keywordToTemplateMap = memeGenerator.getAllKeywordMappings();
+        allKeywords = Array.from(keywordToTemplateMap.keys());
+      }
+      let content = session.content.trim();
+      // 处理前缀要求
       if (config.requirePrefix) {
-        const prefixes = Array.isArray(ctx.root.config.prefix) ?
-          ctx.root.config.prefix : [ctx.root.config.prefix || ''];
-        // 寻找匹配前缀
-        const matchedPrefix = prefixes.find(prefix => prefix && content.startsWith(prefix));
-        if (prefixes.some(p => p) && !matchedPrefix) {
-          return next();
-        }
-        // 去除前缀
-        if (matchedPrefix) {
-          actualContent = content.slice(matchedPrefix.length).trim();
+        const prefixes = [].concat(ctx.root.config.prefix).filter(Boolean);
+        if (prefixes.length) {
+          const matched = prefixes.find(p => content.startsWith(p));
+          if (!matched) return next();
+          content = content.slice(matched.length).trim();
         }
       }
       // 提取关键词和参数
-      const match = actualContent.match(/^(\S+)(?:\s+(.*))?$/);
-      if (!match) return next();
-      const [, possibleKey, argsText = ''] = match;
-      // 查找模板
-      const matchedTemplate = await memeGenerator.findTemplate(possibleKey, false);
-      if (matchedTemplate) {
-        const elements = argsText ? [h('text', { content: argsText })] : [];
-        return memeGenerator.generateMeme(session, possibleKey, elements);
-      }
-      return next();
-    })
+      const spaceIndex = content.indexOf(' ');
+      const key = spaceIndex === -1 ? content : content.substring(0, spaceIndex);
+      // 检查关键词是否匹配
+      const templateId = keywordToTemplateMap.get(key);
+      if (!templateId) return next();
+      // 提取参数并生成表情包
+      const args = spaceIndex === -1 ? '' : content.substring(spaceIndex + 1);
+      const elements = args ? [h('text', { content: args })] : [];
+      return memeGenerator.generateMeme(session, templateId, elements);
+    });
   }
 
   // 注册图片生成相关命令

@@ -281,28 +281,20 @@ export class MemeGenerator {
    */
   matchTemplates(key: string): MemeInfo[] {
     if (!key || !this.memeCache.length) return [];
-    const results: Array<{template: MemeInfo, priority: number}> = [];
-    for (const template of this.memeCache) {
-      let priority = 99; // 默认最低优先级
-      if (template.id === key || template.keywords?.some(k => k === key)) {
-        priority = 1; // 完全匹配
-      } else if (template.keywords?.some(k => k.includes(key))) {
-        priority = 2; // 关键词包含搜索词
-      } else if (template.keywords?.some(k => key.includes(k))) {
-        priority = 3; // 搜索词包含关键词
-      } else if (template.id.includes(key)) {
-        priority = 4; // ID包含搜索词
-      } else if (template.tags?.some(tag => tag === key || tag.includes(key))) {
-        priority = 5; // 标签匹配
-      } else {
-        continue;
-      }
-      results.push({template, priority});
-    }
-    // 按优先级排序（从低到高）并提取模板对象
-    return results
-      .sort((a, b) => a.priority - b.priority)
-      .map(result => result.template);
+    const getPriority = (template: MemeInfo): number => {
+      if (template.id === key || template.keywords?.some(k => k === key)) return 1; // 完全匹配
+      if (template.keywords?.some(k => k.includes(key))) return 2; // 关键词包含搜索词
+      if (template.keywords?.some(k => key.includes(k))) return 3; // 搜索词包含关键词
+      if (template.id.includes(key)) return 4; // ID包含搜索词
+      if (template.tags?.some(tag => tag === key || tag.includes(key))) return 5; // 标签匹配
+      return 99; // 不匹配
+    };
+    // 过滤和排序
+    return this.memeCache
+      .map(template => ({ template, priority: getPriority(template) }))
+      .filter(item => item.priority < 99) // 只保留匹配的模板
+      .sort((a, b) => a.priority - b.priority) // 按优先级排序
+      .map(item => item.template);
   }
 
   /**
@@ -343,6 +335,23 @@ export class MemeGenerator {
   }
 
   /**
+   * 获取所有关键词到模板ID的映射
+   * @returns {Map<string, string>} 关键词到模板ID的映射
+   */
+  getAllKeywordMappings(): Map<string, string> {
+    const keywordMap = new Map<string, string>();
+    for (const template of this.memeCache) {
+      keywordMap.set(template.id, template.id);
+      if (template.keywords && Array.isArray(template.keywords)) {
+        for (const keyword of template.keywords) {
+          if (keyword) keywordMap.set(keyword, template.id);
+        }
+      }
+    }
+    return keywordMap;
+  }
+
+  /**
    * 生成表情包
    * @async
    * @param {any} session - 会话上下文
@@ -352,7 +361,6 @@ export class MemeGenerator {
    */
   async generateMeme(session: any, key: string, args: h[]) {
     try {
-      // 使用优化后的方法获取模板信息
       const templateInfo = await this.findTemplate(key);
       if (!templateInfo) {
         return autoRecall(session, `获取模板信息失败: ${key}`);
