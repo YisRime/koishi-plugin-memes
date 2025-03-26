@@ -94,13 +94,6 @@ export function apply(ctx: Context, config: Config) {
   let keywordToTemplateMap = new Map<string, string>();
   let allKeywords: string[] = [];
 
-  const updateKeywordMappings = () => {
-    if (keywordToTemplateMap.size === 0) {
-      keywordToTemplateMap = memeGenerator.getAllKeywordMappings();
-      allKeywords = Array.from(keywordToTemplateMap.keys());
-    }
-  };
-
   /**
    * 主命令: 制作表情包
    */

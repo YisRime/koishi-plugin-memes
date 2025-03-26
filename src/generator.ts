@@ -482,7 +482,7 @@ export class MemeGenerator {
             options[key] = value
           }
         }
-        else if (part.startsWith('@')) imageInfos.push({ userId: parseTarget(part) })
+        else if (part.startsWith('<at')) imageInfos.push({ userId: parseTarget(part) })
         else texts.push(part)
       })
     }
