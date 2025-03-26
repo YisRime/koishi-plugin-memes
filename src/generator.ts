@@ -1,9 +1,14 @@
 import { Context, h, Logger } from 'koishi'
+import { parseTarget, getUserAvatar, autoRecall } from './index'
 import axios from 'axios'
 import fs from 'fs'
 import path from 'path'
 
-// 表情模板信息接口
+/**
+ * 表情包模板信息接口
+ * @interface MemeInfo
+ * @description 描述表情包模板的结构信息
+ */
 export interface MemeInfo {
   id: string
   keywords: string[]
@@ -19,91 +24,134 @@ export interface MemeInfo {
   [key: string]: any
 }
 
-export class MemeGenerator {
-  private ctx: Context
-  private apiUrl: string
-  private logger: Logger
-  private memeCache: MemeInfo[] = []
-  private lastCacheTime = 0
+/**
+ * 图片获取信息
+ * @typedef {Object} ImageFetchInfo
+ * @description 表示获取图片的来源信息，可以是URL或用户ID
+ */
+export type ImageFetchInfo = { src: string } | { userId: string }
 
-  constructor(ctx: Context, logger: Logger, apiUrl: string) {
-    this.ctx = ctx
-    this.logger = logger
-    this.apiUrl = !apiUrl ? '' : apiUrl.trim().replace(/\/+$/, '')
+/**
+ * 解析后的参数
+ * @interface ResolvedArgs
+ * @description 解析命令后得到的参数结构
+ */
+export interface ResolvedArgs {
+  imageInfos: ImageFetchInfo[]
+  texts: string[]
+  options: Record<string, any>
+}
+
+/**
+ * 图片和用户信息
+ * @interface ImagesAndInfos
+ * @description 包含已获取的图片和对应的用户信息
+ */
+export interface ImagesAndInfos {
+  images: Blob[]
+  userInfos: any[]
+}
+
+/**
+ * 表情包生成器类
+ * @class MemeGenerator
+ * @description 负责与表情包API交互并生成表情包
+ */
+export class MemeGenerator {
+  private memeCache: MemeInfo[] = []
+  private cachePath: string
+
+  /**
+   * 创建表情包生成器实例
+   * @param {Context} ctx - Koishi上下文
+   * @param {Logger} logger - 日志记录器
+   * @param {string} apiUrl - API服务地址
+   */
+  constructor(
+    private ctx: Context,
+    private logger: Logger,
+    private apiUrl: string = ''
+  ) {
+    this.apiUrl = apiUrl?.trim().replace(/\/+$/, '')
+    this.cachePath = path.resolve(this.ctx.baseDir, 'data', 'memes.json')
     this.initCache()
   }
 
-  // 初始化缓存
+  /**
+   * 初始化模板缓存
+   * @private
+   * @async
+   */
   private async initCache() {
     if (!this.apiUrl) return
     this.memeCache = await this.loadCache()
-    if (this.memeCache.length > 0) {
-      this.logger.info(`已加载缓存文件：${this.memeCache.length}项`)
-    } else {
-      await this.refreshCache()
-    }
+    if (!this.memeCache.length) await this.refreshCache()
+    else this.logger.info(`已加载缓存文件：${this.memeCache.length}项`)
   }
 
   /**
-   * 加载缓存
+   * 从本地文件加载缓存
+   * @private
+   * @async
+   * @returns {Promise<MemeInfo[]>} 模板信息数组
    */
   private async loadCache(): Promise<MemeInfo[]> {
-    const cachePath = path.resolve(this.ctx.baseDir, 'data', 'memes.json')
-    if (fs.existsSync(cachePath)) {
-      try {
-        const cacheData = JSON.parse(fs.readFileSync(cachePath, 'utf-8'))
-        if (cacheData.time && cacheData.data) {
-          this.lastCacheTime = cacheData.time
-          return cacheData.data
-        }
-      } catch (e) {
-        this.logger.warn(`读取缓存失败: ${e.message}`)
+    try {
+      if (fs.existsSync(this.cachePath)) {
+        const cacheData = JSON.parse(fs.readFileSync(this.cachePath, 'utf-8'))
+        if (cacheData.time && cacheData.data) return cacheData.data
       }
+    } catch (e) {
+      this.logger.warn(`读取缓存失败: ${e.message}`)
     }
     return []
   }
 
   /**
-   * 保存缓存
+   * 保存缓存到本地文件
+   * @private
+   * @async
+   * @param {MemeInfo[]} data - 要保存的模板数据
+   * @returns {Promise<void>}
    */
   private async saveCache(data: MemeInfo[]): Promise<void> {
-    const cachePath = path.resolve(this.ctx.baseDir, 'data', 'memes.json')
-    this.lastCacheTime = Date.now()
-    const cacheData = {
-      time: this.lastCacheTime,
-      data: data
+    try {
+      fs.writeFileSync(this.cachePath, JSON.stringify({ time: Date.now(), data }, null, 2), 'utf-8')
+      this.logger.info(`已创建缓存文件：${data.length}项`)
+    } catch (e) {
+      this.logger.error(`保存缓存失败: ${e.message}`)
     }
-    fs.writeFileSync(cachePath, JSON.stringify(cacheData, null, 2), 'utf-8')
-    this.logger.info(`已创建缓存文件：${data.length}项`)
   }
 
   /**
-   * 刷新缓存
+   * 刷新模板缓存
+   * @async
+   * @returns {Promise<MemeInfo[]>} 刷新后的模板信息数组
    */
   async refreshCache(): Promise<MemeInfo[]> {
     try {
       const keys = await this.apiRequest<string[]>(`${this.apiUrl}/memes/keys`)
-      if (!keys || !keys.length) {
+      if (!keys?.length) {
         this.logger.warn(`获取模板列表失败或为空`)
         return []
       }
       this.logger.info(`已获取模板ID: ${keys.length}个`)
-      const templates: MemeInfo[] = []
-      for (const key of keys) {
+      const templates = await Promise.all(keys.map(async key => {
         try {
           const info = await this.apiRequest<any>(`${this.apiUrl}/memes/${key}/info`)
-          templates.push({
+          return {
             id: key,
-            keywords: info?.keywords ? (Array.isArray(info.keywords) ? info.keywords : [info.keywords]).filter(Boolean) : [],
+            keywords: info?.keywords ?
+              (Array.isArray(info.keywords) ? info.keywords : [info.keywords]).filter(Boolean) : [],
             tags: info?.tags && Array.isArray(info.tags) ? info.tags : [],
             params_type: info?.params_type || {},
             ...(info || {})
-          })
+          }
         } catch (e) {
           this.logger.warn(`获取模板[${key}]信息失败：${e.message}`)
-          templates.push({ id: key, keywords: [], tags: [], params_type: {} })
+          return { id: key, keywords: [], tags: [], params_type: {} }
         }
-      }
+      }))
       await this.saveCache(templates)
       this.memeCache = templates
       return templates
@@ -114,7 +162,17 @@ export class MemeGenerator {
   }
 
   /**
-   * 通用API请求函数
+   * 发送API请求
+   * @async
+   * @template T - 响应数据类型
+   * @param {string} url - 请求URL
+   * @param {Object} options - 请求选项
+   * @param {string} [options.method='get'] - 请求方法
+   * @param {any} [options.data] - 请求数据
+   * @param {FormData} [options.formData] - 表单数据
+   * @param {string} [options.responseType='json'] - 响应类型
+   * @param {number} [options.timeout=8000] - 超时时间(毫秒)
+   * @returns {Promise<T|null>} 响应数据或null
    */
   async apiRequest<T = any>(url: string, options: {
     method?: 'get' | 'post',
@@ -162,561 +220,274 @@ export class MemeGenerator {
   }
 
   /**
-   * 解析目标用户ID
+   * 获取模板详细信息
+   * @async
+   * @param {MemeInfo} template - 模板信息
+   * @returns {Promise<{id: string, keywords: string[], imgReq: string, textReq: string, tags: string[]}>} 格式化后的模板详情
    */
-  parseTarget(arg: string): string {
-    // 尝试解析at元素
-    try {
-      const atElement = h.select(h.parse(arg), 'at')[0]
-      if (atElement?.attrs?.id) return atElement.attrs.id
-    } catch {}
-    // 尝试匹配@数字或纯数字格式
-    const match = arg.match(/@(\d+)/)
-    if (match) return match[1]
-    // 判断是否为纯数字ID
-    if (/^\d+$/.test(arg.trim())) {
-      const userId = arg.trim()
-      if (/^\d{5,10}$/.test(userId)) return userId
+  async getTemplateDetails(template: MemeInfo) {
+    const { id, keywords = [], tags = [], params_type: pt = {} } = template
+    const formatReq = (min?: number, max?: number, type: string = '') => {
+      if (min === max && min) return `${type}${min}`
+      if (min || max) return `${type}${min || 0}-${max || '∞'}`
+      return ''
     }
-    return arg
+    const imgReq = formatReq(pt.min_images, pt.max_images, '图片')
+    const textReq = formatReq(pt.min_texts, pt.max_texts, '文本')
+    return { id, keywords, imgReq, textReq, tags }
   }
 
   /**
-   * 获取用户头像URL
+   * 验证参数是否符合模板要求
+   * @private
+   * @param {Object} params - 验证参数
+   * @param {number} params.imageCount - 实际图片数量
+   * @param {number} params.minImages - 最少需要的图片数量
+   * @param {number} params.maxImages - 最多允许的图片数量
+   * @param {number} params.textCount - 实际文本数量
+   * @param {number} params.minTexts - 最少需要的文本数量
+   * @param {number} params.maxTexts - 最多允许的文本数量
+   * @throws {Error} 当参数不符合要求时抛出错误
    */
-  async getUserAvatar(session: any, userId?: string): Promise<string> {
-    const targetId = userId || session.userId
-    return (targetId === session.userId && session.user?.avatar) ?
-      session.user.avatar :
-      `https://q1.qlogo.cn/g?b=qq&nk=${targetId}&s=640`
-  }
-
-  /**
-   * 自动撤回消息
-   */
-  async autoRecall(session: any, message: string | number, delay: number = 10000): Promise<any> {
-    if (!message) return null
-    try {
-      const msg = typeof message === 'string' ? await session.send(message) : message
-      setTimeout(async () => {
-        await session.bot?.deleteMessage(session.channelId, msg.toString())
-      }, delay)
-      return null
-    } catch (error) {
-      this.logger.debug(`消息处理失败：${error}`)
-      return null
-    }
-  }
-
-  /**
-   * 通用范围验证函数
-   */
-  validateRange(value: number, min: number, max: number, type: string, unit: string): string | null {
-    const valid = (min == null || value >= min) && (max == null || value <= max)
-    if (valid) return null
-    let rangeText: string
-    let errorType: string
-    if (min === max && min != null) {
-      rangeText = `${min}${unit}`
-      errorType = '数量不符'
-    } else if (min != null && max != null) {
-      rangeText = `${min}~${max}${unit}`
-      errorType = value < min ? '数量不足' : '数量过多'
-    } else if (min != null) {
-      rangeText = `至少${min}${unit}`
-      errorType = '数量不足'
-    } else if (max != null) {
-      rangeText = `最多${max}${unit}`
-      errorType = '数量过多'
-    } else {
-      return `${type}数量错误！当前: ${value}${unit}`
-    }
-    return `${type}${errorType}！当前: ${value}${unit}，需要: ${rangeText}`
-  }
-
-  /**
-   * 处理命令参数并提取图片、文本和选项
-   */
-  private async processArgs(session: any, args: h[], templateInfo?: MemeInfo) {
-    const imageInfos: Array<{ src: string } | { userId: string }> = []
-    const texts: string[] = []
-    let options: Record<string, string> = {}
-    // 预处理模板参数定义
-    let paramOptions: Map<string, {dest: string, action: any}> = new Map()
-    if (templateInfo?.params_type?.args_type?.parser_options) {
-      for (const opt of templateInfo.params_type.args_type.parser_options) {
-        if (opt.names && opt.names.length) {
-          // 为每个别名创建映射
-          for (const name of opt.names) {
-            // 移除前缀 -- 或 -
-            const cleanName = name.replace(/^(--)|-/g, '')
-            paramOptions.set(cleanName, {
-              dest: opt.dest || cleanName,
-              action: opt.action || { type: 0, value: true }
-            })
-          }
-        }
+  private validateParams({
+    imageCount, minImages, maxImages,
+    textCount, minTexts, maxTexts
+  }: {
+    imageCount: number, minImages: number, maxImages: number,
+    textCount: number, minTexts: number, maxTexts: number
+  }): void {
+    const formatRange = (min: number, max: number): string => {
+      if (min === max) return `${min}`
+      if (min != null && max != null) return `${min}~${max}`
+      if (min != null) return `至少${min}`
+      if (max != null) return `最多${max}`
+      return ''
+    };
+    const checkCount = (count: number, min: number, max: number, type: string): void => {
+      if ((min != null && count < min) || (max != null && min != null && count > max)) {
+        const range = formatRange(min, max);
+        throw new Error(`${type}数量不匹配：需要${range}${type === '图片' ? '张' : '条'}，当前${count}${type === '图片' ? '张' : '条'}`);
       }
     }
+    checkCount(imageCount, minImages, maxImages, '图片');
+    checkCount(textCount, minTexts, maxTexts, '文本');
+  }
+
+  /**
+   * 生成表情包
+   * @async
+   * @param {any} session - 会话上下文
+   * @param {string} key - 模板ID或关键词
+   * @param {h[]} args - 参数元素数组
+   * @returns {Promise<h|string>} 生成的图片元素或错误信息
+   */
+  async generateMeme(session: any, key: string, args: h[]) {
+    try {
+      // 获取模板信息
+      let templateInfo = this.memeCache.find(t => t.id === key || t.keywords?.some(k => k === key))
+      if (!templateInfo) {
+        templateInfo = await this.apiRequest(`${this.apiUrl}/memes/${key}/info`)
+        if (!templateInfo) return autoRecall(session, `获取模板信息失败: ${key}`)
+      }
+      const tempId = templateInfo.id || key
+      const {
+        min_images = 0, max_images = 0,
+        min_texts = 0, max_texts = 0,
+        default_texts = []
+      } = templateInfo.params_type || {}
+      // 解析参数
+      const { imageInfos: origImageInfos, texts: origTexts, options } =
+        await this.parseArgs(session, args, templateInfo)
+          .catch(e => { throw new Error(`参数解析失败: ${e.message}`) })
+      // 添加用户头像和默认文本
+      let imageInfos = [...origImageInfos]
+      let texts = [...origTexts]
+      const needSelfAvatar = (min_images === 1 && !imageInfos.length) ||
+                            (imageInfos.length && imageInfos.length + 1 === min_images)
+      if (needSelfAvatar) {
+        imageInfos = [{ userId: session.userId }, ...imageInfos]
+      }
+      if (!texts.length && default_texts.length) {
+        texts = [...default_texts]
+      }
+      // 验证参数
+      try {
+        this.validateParams({
+          imageCount: imageInfos.length, minImages: min_images, maxImages: max_images,
+          textCount: texts.length, minTexts: min_texts, maxTexts: max_texts
+        });
+      } catch (e) {
+        return autoRecall(session, e.message);
+      }
+      // 获取图片和用户信息
+      const imagesAndInfos = await this.fetchImages(session, imageInfos)
+        .catch(e => { throw new Error(`获取图片失败: ${e.message}`) })
+      // 生成表情包
+      const imageBuffer = await this.renderMeme(tempId, texts, imagesAndInfos, options)
+        .catch(e => { throw new Error(`生成表情失败: ${e.message}`) })
+      return h('image', { url: `data:image/png;base64,${Buffer.from(imageBuffer).toString('base64')}` })
+    } catch (e) {
+      return autoRecall(session, e.message)
+    }
+  }
+
+  /**
+   * 解析命令参数
+   * @private
+   * @async
+   * @param {any} session - 会话上下文
+   * @param {h[]} args - 参数元素数组
+   * @param {MemeInfo} templateInfo - 模板信息
+   * @returns {Promise<ResolvedArgs>} 解析后的参数
+   */
+  private async parseArgs(session: any, args: h[], templateInfo: MemeInfo): Promise<ResolvedArgs> {
+    const imageInfos: ImageFetchInfo[] = []
+    const texts: string[] = []
+    let options: Record<string, any> = {}
+    let allText = ''
     // 添加引用消息中的图片
     if (session.quote?.elements) {
       const processElement = (e: h) => {
-        if (e.children?.length) {
-          for (const child of e.children) processElement(child)
-        }
-        if (e.type === 'img' && e.attrs.src) {
-          imageInfos.push({ src: e.attrs.src })
-        }
+        if (e.children?.length) e.children.forEach(processElement)
+        if (e.type === 'img' && e.attrs.src) imageInfos.push({ src: e.attrs.src })
       }
-      for (const element of session.quote.elements) {
-        processElement(element)
-      }
+      session.quote.elements.forEach(processElement)
     }
-    // 处理参数中的图片和文本
-    const textBuffer: string[] = []
-    const resolveBuffer = () => {
-      if (!textBuffer.length) return
-      const text = textBuffer.join('')
-      // 提取选项
-      const extractedOptions: Record<string, string> = {}
-      const cleanText = text.replace(/(?:--)([a-zA-Z0-9_]+)(?:=([^\s]+))?|(\p{Script=Han}+)(?:=([^\s]+))?/gu,
-        (match, key1, value1, key2, value2) => {
-          const key = key1 || key2
-          const value = value1 || value2 || 'true'
-          if (key) {
-            extractedOptions[key] = value
-          }
-          return ''
-        }).trim()
-      // 处理从文本中提取的选项
-      for (const [key, value] of Object.entries(extractedOptions)) {
-        const paramDef = paramOptions.get(key)
-        if (paramDef) {
-          const destKey = paramDef.dest || key
-          if (paramDef.action && paramDef.action.type === 0) {
-            options[destKey] = value === 'false' ? 'false' : 'true'
-          } else {
-            options[destKey] = value
-          }
-        } else {
-          options[key] = value
-        }
-      }
-      // 处理@标签和普通文本
-      const atRegex = /<at\s+id="(\d+)"\s*\/>/g
-      let match
-      let lastIndex = 0
-      let hasAtTag = false
-      const textToProcess = cleanText || text
-      // 查找所有 at 标签
-      while ((match = atRegex.exec(textToProcess)) !== null) {
-        hasAtTag = true
-        // 处理 at 标签前的文本
-        if (match.index > lastIndex) {
-          const segment = textToProcess.substring(lastIndex, match.index)
-          const segmentTexts = (() => {
-            const matched = segment.match(/[^\s"']+|"([^"]*)"|'([^']*)'/g)
-            if (!matched) return []
-            return matched.map(v => v.replace(/^["']|["']$/g, ''))
-          })().filter(v => {
-            if (v.startsWith('@')) {
-              imageInfos.push({ userId: this.parseTarget(v) })
-              return false
+    // 提取文本和元素
+    const extractText = (e: h): void => {
+      if (e.type === 'text' && e.attrs.content) allText += e.attrs.content + ' '
+      else if (e.type === 'at' && e.attrs.id) imageInfos.push({ userId: e.attrs.id })
+      else if (e.type === 'img' && e.attrs.src) imageInfos.push({ src: e.attrs.src })
+      if (e.children?.length) e.children.forEach(extractText)
+    }
+    args.forEach(extractText)
+    // 处理提取的文本
+    if (allText.trim()) {
+      const splitText = (text: string): string[] => {
+        const result: string[] = []
+        let current = ''
+        let inQuote = false
+        let quoteChar = ''
+        for (let i = 0; i < text.length; i++) {
+          const char = text[i]
+          if ((char === '"' || char === "'") && (i === 0 || text[i-1] !== '\\')) {
+            if (!inQuote) {
+              inQuote = true
+              quoteChar = char
+            } else if (char === quoteChar) {
+              inQuote = false
+              quoteChar = ''
+            } else {
+              current += char
             }
-            return !!v.trim()
-          })
-          texts.push(...segmentTexts)
-        }
-        // 处理 at 标签
-        imageInfos.push({ userId: match[1] })
-        lastIndex = match.index + match[0].length
-      }
-      // 处理无at标签或at标签后的文本
-      if (!hasAtTag || lastIndex < textToProcess.length) {
-        const remainingText = hasAtTag ? textToProcess.substring(lastIndex) : textToProcess
-        const bufferTexts = (() => {
-          const matched = remainingText.match(/[^\s"']+|"([^"]*)"|'([^']*)'/g)
-          if (!matched) return []
-          return matched.map(v => v.replace(/^["']|["']$/g, ''))
-        })().filter(v => {
-          if (v.startsWith('@')) {
-            imageInfos.push({ userId: this.parseTarget(v) })
-            return false
-          }
-          return !!v.trim()
-        })
-        texts.push(...bufferTexts)
-      }
-      textBuffer.length = 0
-    }
-    // 递归处理元素
-    const processElement = (e: h) => {
-      if (e.children?.length) {
-        for (const child of e.children) processElement(child)
-      }
-      if (e.type === 'text') {
-        if (e.attrs.content) textBuffer.push(e.attrs.content)
-        return
-      }
-      resolveBuffer()
-      if (e.type === 'img' && e.attrs.src) {
-        imageInfos.push({ src: e.attrs.src })
-      } else if (e.type === 'at' && e.attrs.id) {
-        imageInfos.push({ userId: e.attrs.id })
-      }
-    }
-    for (const element of args) {
-      processElement(element)
-    }
-    resolveBuffer()
-    // 转换选项值类型
-    const typedOptions: Record<string, any> = {}
-    // 有模型定义时，按定义类型转换
-    if (templateInfo?.params_type?.args_type?.args_model?.properties) {
-      const properties = templateInfo.params_type.args_type.args_model.properties
-      for (const [key, value] of Object.entries(options)) {
-        if (key === 'user_infos') continue
-        if (properties[key]) {
-          const prop = properties[key]
-          if (prop.type === 'integer' || prop.type === 'number') {
-            typedOptions[key] = Number(value)
-          } else if (prop.type === 'boolean') {
-            typedOptions[key] = value === 'true'
+          } else if (char === ' ' && !inQuote) {
+            if (current) {
+              result.push(current)
+              current = ''
+            }
           } else {
-            typedOptions[key] = value
+            current += char
           }
-        } else {
-          typedOptions[key] = value
         }
+        if (current) result.push(current)
+        return result
       }
-    } else {
-      // 无模型定义时，进行基本类型推断
-      for (const [key, value] of Object.entries(options)) {
-        if (value === 'true') typedOptions[key] = true
-        else if (value === 'false') typedOptions[key] = false
-        else if (/^-?\d+$/.test(value)) typedOptions[key] = parseInt(value)
-        else if (/^-?\d+\.\d+$/.test(value)) typedOptions[key] = parseFloat(value)
-        else typedOptions[key] = value
+      const splitArgs = splitText(allText.trim())
+      splitArgs.forEach(part => {
+        if (part.startsWith('-')) {
+          const optMatch = part.match(/^-([a-zA-Z0-9_-]+)(?:=(.*))?$/)
+          if (optMatch) {
+            const [, key, rawValue = 'true'] = optMatch
+            let value: any = rawValue
+            if (rawValue === 'true') value = true
+            else if (rawValue === 'false') value = false
+            else if (/^-?\d+$/.test(rawValue)) value = parseInt(rawValue, 10)
+            else if (/^-?\d+\.\d+$/.test(rawValue)) value = parseFloat(rawValue)
+            options[key] = value
+          }
+        }
+        else if (part.startsWith('@')) imageInfos.push({ userId: parseTarget(part) })
+        else texts.push(part)
+      })
+    }
+    // 转换选项类型
+    const properties = templateInfo?.params_type?.args_type?.args_model?.properties || {}
+    for (const key in properties) {
+      if (key in options && key !== 'user_infos') {
+        const prop = properties[key]
+        const value = options[key]
+        if (prop.type === 'integer' && typeof value !== 'number')
+          options[key] = parseInt(String(value), 10)
+        else if (prop.type === 'number' && typeof value !== 'number')
+          options[key] = parseFloat(String(value))
+        else if (prop.type === 'boolean' && typeof value !== 'boolean')
+          options[key] = value === 'true' || value === '1' || value === 1
       }
     }
-    return { imageInfos, texts, options: typedOptions }
+    return { imageInfos, texts, options }
   }
 
   /**
-   * 处理模板参数并验证
+   * 获取图片和用户信息
+   * @private
+   * @async
+   * @param {any} session - 会话上下文
+   * @param {ImageFetchInfo[]} imageInfos - 图片来源信息
+   * @returns {Promise<ImagesAndInfos>} 获取到的图片和用户信息
+   * @throws {Error} 获取图片失败时抛出错误
    */
-  private async processTemplateParameters(session: any, key: string, args: h[]) {
-    let templateInfo = this.memeCache.find(t => t.id === key)
-    if (!templateInfo) {
-      templateInfo = await this.apiRequest(`${this.apiUrl}/memes/${key}/info`)
-      if (!templateInfo) {
-        return this.autoRecall(session, `获取模板信息失败: ${key}`)
-      }
-    }
-    const paramsType = templateInfo.params_type || {}
-    const {
-      min_images: minImages = 0,
-      max_images: maxImages = 0,
-      min_texts: minTexts = 0,
-      max_texts: maxTexts = 0,
-      default_texts: defaultTexts = []
-    } = paramsType
-    // 解析参数
-    const hArgs = args.map(arg => typeof arg === 'string' ? h('text', { content: arg }) : arg)
-    const { imageInfos, texts, options } = await this.processArgs(session, hArgs, templateInfo)
-    // 处理图片和文本
-    let processedImageInfos = [...imageInfos]
-    let processedTexts = [...texts]
-    // 自动使用发送者头像
-    const autoUseAvatar = !!(
-      (!imageInfos.length && minImages === 1) ||
-      (imageInfos.length && imageInfos.length + 1 === minImages)
-    )
-    if (autoUseAvatar) {
-      processedImageInfos.unshift({ userId: session.userId })
-    }
-    // 使用默认文本
-    if (!texts.length) {
-      processedTexts.push(...defaultTexts)
-    }
-    // 验证参数
-    const imagesError = this.validateRange(processedImageInfos.length, minImages, maxImages, "图片", "张")
-    if (imagesError) return this.autoRecall(session, imagesError)
-    const textsError = this.validateRange(processedTexts.length, minTexts, maxTexts, "文本", "条")
-    if (textsError) return this.autoRecall(session, textsError)
-    // 处理图片和用户信息
-    const images: Blob[] = []
-    const userInfos: any[] = []
-    for (const info of processedImageInfos) {
-      let imageUrl: string
-      let userInfo = {}
+  private async fetchImages(session: any, imageInfos: ImageFetchInfo[]): Promise<ImagesAndInfos> {
+    const imageInfoKeys = imageInfos.map(v => JSON.stringify(v))
+    const imageMap: Record<string, Blob> = {}
+    const userInfoMap: Record<string, any> = {}
+    const uniqueKeys = [...new Set(imageInfoKeys)]
+    await Promise.all(uniqueKeys.map(async (key) => {
+      const info = JSON.parse(key)
+      let url: string
+      let userInfo: any = {}
       if ('src' in info) {
-        imageUrl = info.src
+        url = info.src
       } else if ('userId' in info) {
-        imageUrl = await this.getUserAvatar(session, info.userId)
+        url = await getUserAvatar(session, info.userId)
         userInfo = { name: info.userId }
-      } else {
-        continue
       }
-      try {
-        const response = await axios.get(imageUrl, {
-          responseType: 'arraybuffer',
-          timeout: 8000
-        })
-        const buffer = Buffer.from(response.data)
-        const blob = new Blob([buffer], { type: response.headers['content-type'] || 'image/png' })
-        images.push(blob)
-        userInfos.push(userInfo)
-      } catch (e) {
-        this.logger.error(`获取图片失败: ${imageUrl} - ${e.message}`)
-        return this.autoRecall(session, `获取图片失败: ${imageUrl}`)
-      }
-    }
-    return { templateInfo, images, texts: processedTexts, userInfos, templateOptions: options }
-  }
-
-  /**
-   * 获取模板详情
-   */
-  async getTemplateDetails(template: MemeInfo) {
-    const info = template
-    const keywords = info.keywords || []
-    const tags = info.tags || []
-    const pt = info.params_type || {}
-    let imgReq = ''
-    let textReq = ''
-    if (pt.min_images === pt.max_images) {
-      imgReq = pt.min_images > 0 ? `图片${pt.min_images}` : ''
-    } else {
-      imgReq = pt.min_images > 0 || pt.max_images > 0 ? `图片${pt.min_images}-${pt.max_images}` : ''
-    }
-    if (pt.min_texts === pt.max_texts) {
-      textReq = pt.min_texts > 0 ? `文本${pt.min_texts}` : ''
-    } else {
-      textReq = pt.min_texts > 0 || pt.max_texts > 0 ? `文本${pt.min_texts}-${pt.max_texts}` : ''
-    }
+      const response = await axios.get(url, { responseType: 'arraybuffer', timeout: 8000 })
+      const buffer = Buffer.from(response.data)
+      const contentType = response.headers['content-type'] || 'image/png'
+      imageMap[key] = new Blob([buffer], { type: contentType })
+      userInfoMap[key] = userInfo
+    }))
     return {
-      id: template.id,
-      keywords,
-      imgReq,
-      textReq,
-      tags
+      images: imageInfoKeys.map(key => imageMap[key]),
+      userInfos: imageInfoKeys.map(key => userInfoMap[key])
     }
   }
 
   /**
-   * 生成表情包图片
+   * 渲染表情包
+   * @private
+   * @async
+   * @param {string} tempId - 模板ID
+   * @param {string[]} texts - 文本参数
+   * @param {ImagesAndInfos} imagesAndInfos - 图片和用户信息
+   * @param {Record<string, any>} options - 其他选项
+   * @returns {Promise<Buffer>} 生成的图片数据
    */
-  async generateMeme(session: any, key: string, args: h[]) {
-    if (!key) {
-      return this.autoRecall(session, '请提供模板ID和文本参数')
-    }
-    try {
-      // 处理模板参数
-      const result = await this.processTemplateParameters(session, key, args)
-      if (!result) return
-      const { images, texts, userInfos, templateOptions } = result
-      this.logger.debug(`正在生成表情: ${key}, 文本数量: ${texts.length}, 图片数量: ${images.length}`)
-      // 准备请求数据
-      const formData = new FormData()
-      texts.forEach(text => formData.append('texts', text))
-      images.forEach(img => formData.append('images', img))
-      const memeArgs = {
-        user_infos: userInfos,
-        ...templateOptions
-      }
-      formData.append('args', JSON.stringify(memeArgs))
-      // 请求生成表情包
-      const imageBuffer = await this.apiRequest<Buffer>(`${this.apiUrl}/memes/${key}/`, {
-        method: 'post',
-        formData,
-        responseType: 'arraybuffer',
-        timeout: 10000
-      })
-      if (!imageBuffer) {
-        this.logger.error(`生成表情失败: ${key} - API返回空结果`)
-        return this.autoRecall(session, `生成表情失败: ${key}`)
-      }
-      // 返回图片
-      const base64 = Buffer.from(imageBuffer).toString('base64')
-      return h('image', { url: `data:image/png;base64,${base64}` })
-    } catch (e) {
-      this.logger.error(`生成表情出错: ${e.message}`)
-      return this.autoRecall(session, `生成表情出错: ${e.message}`)
-    }
-  }
-
-  /**
-   * 计算字符串显示宽度（中文字符宽度2，英文字符宽度1）
-   */
-  private getStringDisplayWidth(str: string): number {
-    let width = 0
-    for (let i = 0; i < str.length; i++) {
-      if (/[\u4e00-\u9fa5\uff00-\uffff]/.test(str[i])) {
-        width += 2
-      } else {
-        width += 1
-      }
-    }
-    return width
-  }
-
-  /**
-   * 获取表情包列表
-   */
-  async getMemeList(page?: string) {
-    try {
-      let keys: string[]
-      if (this.memeCache.length > 0) {
-        keys = this.memeCache.map(t => t.id)
-      } else {
-        const apiKeys = await this.apiRequest<string[]>(`${this.apiUrl}/memes/keys`)
-        if (!apiKeys) {
-          return null
-        }
-        keys = apiKeys
-      }
-      // 获取所有模板详情
-      const allTemplates = await Promise.all(keys.map(async (key) => {
-        const cachedTemplate = this.memeCache.find(t => t.id === key)
-        if (cachedTemplate) {
-          return this.getTemplateDetails(cachedTemplate)
-        } else {
-          try {
-            const info = await this.apiRequest(`${this.apiUrl}/memes/${key}/info`)
-            if (!info) return { id: key, keywords: [], imgReq: '', textReq: '', tags: [] }
-            return this.getTemplateDetails({
-              id: key,
-              keywords: info.keywords ? (Array.isArray(info.keywords) ? info.keywords : [info.keywords]) : [],
-              tags: info.tags && Array.isArray(info.tags) ? info.tags : [],
-              params_type: info.params_type || {}
-            })
-          } catch (err) {
-            return { id: key, keywords: [], imgReq: '', textReq: '', tags: [] }
-          }
-        }
-      }))
-      // 收集所有模板的关键词
-      const allKeywords: string[] = []
-      allTemplates.forEach(template => {
-        if (template.keywords.length > 0) {
-          allKeywords.push(...template.keywords)
-        } else {
-          allKeywords.push(template.id)
-        }
-      })
-      // 格式化为行，尽可能多地在一行中放置关键词
-      const formattedLines: string[] = []
-      let currentLine = ''
-      for (const keyword of allKeywords) {
-        // 检查添加这个关键词后是否会超出最大宽度
-        const separator = currentLine ? ' ' : ''
-        if (this.getStringDisplayWidth(currentLine + separator + keyword) <= 36) {
-          currentLine += separator + keyword
-        } else {
-          // 如果会超出，就把当前行添加到结果中，然后开始新行
-          formattedLines.push(currentLine)
-          currentLine = keyword
-        }
-      }
-      // 添加最后一行
-      if (currentLine) {
-        formattedLines.push(currentLine)
-      }
-      // 分页处理
-      const LINES_PER_PAGE = 10
-      const showAll = page === 'all'
-      const pageNum = typeof page === 'string' ? (parseInt(page) || 1) : (page || 1)
-      const totalPages = Math.ceil(formattedLines.length / LINES_PER_PAGE)
-      const validPage = Math.max(1, Math.min(pageNum, totalPages))
-      const displayLines = showAll
-        ? formattedLines
-        : formattedLines.slice((validPage - 1) * LINES_PER_PAGE, validPage * LINES_PER_PAGE)
-      return {
-        keys,
-        totalTemplates: allTemplates.length,
-        totalKeywords: allKeywords.length,
-        displayLines,
-        totalPages,
-        validPage,
-        showAll
-      }
-    } catch (err) {
-      this.logger.error(`列出模板失败: ${err.message}`)
-      return null
-    }
-  }
-
-  /**
-   * 获取表情包模板信息
-   */
-  async getMemeInfo(key: string) {
-    try {
-      // 先尝试直接匹配ID
-      let template = this.memeCache.find(t => t.id === key)
-      // 如果不是ID，尝试匹配关键词
-      if (!template) {
-        const matches = this.memeCache.filter(t =>
-          t.keywords.some(k => k.includes(key)) ||
-          t.tags.some(t => t.includes(key))
-        )
-        if (matches.length > 0) {
-          template = matches[0]
-          // 如果找到多个匹配项，添加提示信息到模板
-          if (matches.length > 1) {
-            template = { ...template, _multipleMatches: matches.length }
-          }
-        }
-      }
-      // 获取模板信息
-      let info
-      if (template) {
-        info = template
-      } else {
-        info = await this.apiRequest(`${this.apiUrl}/memes/${key}/info`)
-        if (!info) {
-          return null
-        }
-      }
-      // 预览图
-      let previewImage = null
-      try {
-        const previewImageBuffer = await this.apiRequest<Buffer>(
-          `${this.apiUrl}/memes/${template?.id || key}/preview`,
-          {
-            responseType: 'arraybuffer',
-            timeout: 8000
-          }
-        );
-        if (previewImageBuffer) {
-          previewImage = previewImageBuffer;
-        }
-      } catch (previewErr) {
-        this.logger.warn(`获取预览图失败: ${template?.id || key} - ${previewErr.message}`);
-      }
-      return { info, previewImage, searchKey: key, templateId: template?.id || key }
-    } catch (err) {
-      this.logger.error(`获取模板信息失败: ${key} - ${err.message}`)
-      return null
-    }
-  }
-
-  /**
-   * 搜索表情模板
-   */
-  async searchMeme(keyword: string) {
-    try {
-      if (this.memeCache.length === 0) {
-        await this.refreshCache()
-      }
-      return this.memeCache.filter(template =>
-        template.keywords.some(k => k.includes(keyword)) ||
-        template.tags.some(t => t.includes(keyword)) ||
-        template.id.includes(keyword)
-      )
-    } catch (err) {
-      this.logger.error(`搜索模板失败: ${keyword} - ${err.message}`)
-      return null
-    }
+  private async renderMeme(
+    tempId: string,
+    texts: string[],
+    imagesAndInfos: ImagesAndInfos,
+    options: Record<string, any>
+  ): Promise<Buffer> {
+    const formData = new FormData()
+    texts.forEach(text => formData.append('texts', text))
+    imagesAndInfos.images.forEach(img => formData.append('images', img))
+    formData.append('args', JSON.stringify({ user_infos: imagesAndInfos.userInfos, ...options }))
+    return this.apiRequest<Buffer>(`${this.apiUrl}/memes/${tempId}/`, {
+      method: 'post',
+      formData,
+      responseType: 'arraybuffer',
+      timeout: 10000
+    })
   }
 }

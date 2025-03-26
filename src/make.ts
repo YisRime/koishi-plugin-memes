@@ -1,5 +1,5 @@
 import { Context, h, Command } from 'koishi'
-import { MemeGenerator } from './generator'
+import { parseTarget, getUserAvatar, autoRecall } from './index'
 import {} from 'koishi-plugin-puppeteer'
 import { readFileSync, existsSync } from 'fs'
 import path from 'path'
@@ -18,7 +18,6 @@ export interface OverlayOptions {
  */
 export class MemeMaker {
   private ctx: Context
-  private generator: MemeGenerator
   private readonly IMAGE_CONFIG = {
     sizes: {
       standard: { width: 1280, height: 720 },
@@ -44,9 +43,8 @@ export class MemeMaker {
   /**
    * 创建表情生成器实例
    */
-  constructor(ctx: Context, generator: MemeGenerator) {
+  constructor(ctx: Context) {
     this.ctx = ctx
-    this.generator = generator
     // 确保背景路径完整
     for (const key in this.IMAGE_CONFIG.styles) {
       const style = this.IMAGE_CONFIG.styles[key]
@@ -138,13 +136,13 @@ export class MemeMaker {
         .example(`memes.make.${name} 123456789 - 使用QQ号生成图片`)
         .action(async (params, target) => {
           const session = params.session;
-          const userId = target ? this.generator.parseTarget(target) || session.userId : session.userId;
+          const userId = target ? parseTarget(target) || session.userId : session.userId;
           try {
-            const avatar = await this.generator.getUserAvatar(session, userId);
+            const avatar = await getUserAvatar(session, userId);
             const result = await this.generateAvatarEffect(avatar, name);
             return h.image(result, 'image/png');
           } catch (error) {
-            return this.generator.autoRecall(session, '生成出错：' + error.message);
+            return autoRecall(session, '生成出错：' + error.message);
           }
         });
     };
