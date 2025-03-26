@@ -482,7 +482,19 @@ export class MemeGenerator {
             options[key] = value
           }
         }
-        else if (part.startsWith('<at')) imageInfos.push({ userId: parseTarget(part) })
+        else if (part.startsWith('<at')) {
+          const userId = parseTarget(part)
+          if (userId) imageInfos.push({ userId })
+        }
+        else if (part.startsWith('@')) {
+          const match = part.match(/@(\d+)/)
+          if (match && match[1]) {
+            const userId = match[1]
+            imageInfos.push({ userId })
+          } else {
+            texts.push(part)
+          }
+        }
         else texts.push(part)
       })
     }
@@ -524,9 +536,11 @@ export class MemeGenerator {
       if ('src' in info) {
         url = info.src
       } else if ('userId' in info) {
+        // 这里调用getUserAvatar来获取用户头像URL
         url = await getUserAvatar(session, info.userId)
         userInfo = { name: info.userId }
       }
+      // 接下来使用获取到的URL下载实际图片
       const response = await axios.get(url, { responseType: 'arraybuffer', timeout: 8000 })
       const buffer = Buffer.from(response.data)
       const contentType = response.headers['content-type'] || 'image/png'
