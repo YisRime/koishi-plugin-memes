@@ -421,6 +421,17 @@ export class MemeGenerator {
     const texts: string[] = []
     let options: Record<string, any> = {}
     let allText = ''
+
+    const processedAtIds = new Set<string>()
+    // 处理用户ID
+    const processUserId = (userId: string): boolean => {
+      if (userId && !processedAtIds.has(userId)) {
+        imageInfos.push({ userId })
+        processedAtIds.add(userId)
+        return true
+      }
+      return false
+    }
     // 添加引用消息中的图片
     if (session.quote?.elements) {
       const processElement = (e: h) => {
@@ -432,7 +443,7 @@ export class MemeGenerator {
     // 提取文本和元素
     const extractText = (e: h): void => {
       if (e.type === 'text' && e.attrs.content) allText += e.attrs.content + ' '
-      else if (e.type === 'at' && e.attrs.id) imageInfos.push({ userId: e.attrs.id })
+      else if (e.type === 'at' && e.attrs.id) processUserId(e.attrs.id)
       else if (e.type === 'img' && e.attrs.src) imageInfos.push({ src: e.attrs.src })
       if (e.children?.length) e.children.forEach(extractText)
     }
@@ -484,13 +495,12 @@ export class MemeGenerator {
         }
         else if (part.startsWith('<at')) {
           const userId = parseTarget(part)
-          if (userId) imageInfos.push({ userId })
+          processUserId(userId)
         }
         else if (part.startsWith('@')) {
           const match = part.match(/@(\d+)/)
           if (match && match[1]) {
-            const userId = match[1]
-            imageInfos.push({ userId })
+            processUserId(match[1])
           } else {
             texts.push(part)
           }

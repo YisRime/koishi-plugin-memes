@@ -1,7 +1,7 @@
 {
   "name": "koishi-plugin-memes",
   "description": "生成 Meme 表情包，支持 MemeGenerator 和任意 API 接口",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "contributors": [
     "Yis_Rime <yis_rime@outlook.com>"
   ],
