@@ -439,13 +439,21 @@ export class MemeGenerator {
       }
       session.quote.elements.forEach(processQuoteElement)
     }
-    // 处理文本内容中的at标签
+    // 处理文本内容中的标签
     const processTextContent = (content: string): string => {
-      const atTagRegex = /<at id=['"]?([0-9]+)['"]?\/>/g
-      return content.replace(atTagRegex, (match, userId) => {
+      // 处理at标签
+      let processedContent = content.replace(/<at id=['"]?([0-9]+)['"]?\/>/g, (match, userId) => {
         processUserId(userId)
         return ' '
       })
+      // 处理img标签
+      processedContent = processedContent.replace(/<img[^>]*src=['"]([^'"]+)['"][^>]*\/?>/g, (match, src) => {
+        if (src) {
+          imageInfos.push({ src })
+        }
+        return ' '
+      })
+      return processedContent
     }
     // 递归处理元素
     const processElement = (e: h): void => {
