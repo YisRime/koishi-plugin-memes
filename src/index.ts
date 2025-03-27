@@ -409,7 +409,21 @@ export function apply(ctx: Context, config: Config) {
         keywordToTemplateMap = memeGenerator.getAllKeywordMappings();
         allKeywords = Array.from(keywordToTemplateMap.keys());
       }
-      let content = session.content.trim();
+      const rawContent = session.content;
+      // 处理at标签
+      const elements = h.parse(rawContent);
+      let textContent = '';
+      const atElements = [];
+      elements.forEach(element => {
+        if (element.type === 'text') {
+          textContent += element.attrs.content || '';
+        } else if (element.type === 'at') {
+          atElements.push(element);
+          textContent += ' ';
+        }
+      });
+      // 处理消息内容
+      let content = textContent.trim();
       // 处理前缀要求
       if (config.requirePrefix) {
         const prefixes = [].concat(ctx.root.config.prefix).filter(Boolean);
@@ -425,10 +439,18 @@ export function apply(ctx: Context, config: Config) {
       // 检查关键词是否匹配
       const templateId = keywordToTemplateMap.get(key);
       if (!templateId) return next();
-      // 提取参数并生成表情包
+      // 提取参数
       const args = spaceIndex === -1 ? '' : content.substring(spaceIndex + 1);
-      const elements = args ? [h('text', { content: args })] : [];
-      return memeGenerator.generateMeme(session, templateId, elements);
+      // 构建参数元素
+      const paramElements = [];
+      if (args) {
+        paramElements.push(h('text', { content: args }));
+      }
+      atElements.forEach(at => {
+        paramElements.push(at);
+      });
+      // 生成表情包
+      return memeGenerator.generateMeme(session, key, paramElements);
     });
   }
 
