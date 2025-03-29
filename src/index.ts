@@ -412,65 +412,35 @@ export function apply(ctx: Context, config: Config) {
       // 解析消息内容
       const rawContent = session.content;
       if (!rawContent) return next();
-      const elements = h.parse(rawContent);
-      // 提取第一个文本元素的内容用于关键词匹配
-      let firstTextContent = '';
-      let firstTextElement = elements.find(el => el.type === 'text');
-      if (firstTextElement && firstTextElement.attrs.content) {
-        firstTextContent = firstTextElement.attrs.content.trim();
-      }
-      // 处理前缀要求
+      // 处理前缀
+      let textContent = rawContent.trim();
       if (config.requirePrefix) {
         const prefixes = [].concat(ctx.root.config.prefix).filter(Boolean);
         if (prefixes.length) {
-          const matched = prefixes.find(p => firstTextContent.startsWith(p));
+          const matched = prefixes.find(p => textContent.startsWith(p));
           if (!matched) return next();
-          firstTextContent = firstTextContent.slice(matched.length).trim();
+          textContent = textContent.slice(matched.length).trim();
         }
       }
-      // 提取关键词（第一个空格前的内容）
-      const spaceIndex = firstTextContent.indexOf(' ');
-      const key = spaceIndex === -1 ? firstTextContent : firstTextContent.substring(0, spaceIndex);
-      // 检查关键词是否匹配
+      // 检查空格
+      const spaceIndex = textContent.indexOf(' ');
+      if (spaceIndex === -1) return next();
+      // 提取并检查关键词
+      const key = textContent.substring(0, spaceIndex);
       const templateId = keywordToTemplateMap.get(key);
       if (!templateId) return next();
-      // 准备参数元素
+      // 提取并处理剩余内容
+      const remainingText = textContent.substring(spaceIndex + 1).trim();
       const paramElements: h[] = [];
-      // 处理第一个文本元素中的剩余部分
-      if (spaceIndex !== -1) {
-        const remainingText = firstTextContent.substring(spaceIndex + 1);
-        if (remainingText) {
-          paramElements.push(h('text', { content: remainingText }));
-        }
+      if (remainingText) {
+        paramElements.push(h('text', { content: remainingText }));
       }
-      // 添加除第一个文本元素外的所有其他元素
-      elements.forEach((element, index) => {
-        // 明确跳过已处理的第一个文本元素
-        if (element.type === 'text' && index === elements.indexOf(firstTextElement)) {
-          return;
-        }
-        // 不同类型元素分别处理，但统一添加到参数列表
-        if (element.type === 'at' && element.attrs.id) {
-          paramElements.push(element);
-        } else {
+      const elements = h.parse(rawContent);
+      elements.forEach((element) => {
+        if (element.type !== 'text') {
           paramElements.push(element);
         }
       });
-      // 记录参数元素
-      if (paramElements.length > 0) {
-        paramElements.forEach((el, i) => {
-          if (el.type === 'at') {
-            logger.info(`参数 ${i+1}: at元素，id=${el.attrs.id}`);
-          } else if (el.type === 'text') {
-            logger.info(`参数 ${i+1}: 文本元素，内容="${el.attrs.content}"`);
-          } else if (el.type === 'img') {
-            logger.info(`参数 ${i+1}: 图片元素，src=${el.attrs.src?.substring(0, 20)}...`);
-          } else {
-            logger.info(`参数 ${i+1}: ${el.type}元素`);
-          }
-        });
-      }
-      // 生成表情包
       return memeGenerator.generateMeme(session, key, paramElements);
     });
   }

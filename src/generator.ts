@@ -420,16 +420,12 @@ export class MemeGenerator {
     const imageInfos: ImageFetchInfo[] = []
     const texts: string[] = []
     const options: Record<string, any> = {}
-    const processedAtIds = new Set<string>()
     let allText = ''
     // 处理用户ID
-    const processUserId = (userId: string): boolean => {
-      if (userId && !processedAtIds.has(userId)) {
+    const processUserId = (userId: string): void => {
+      if (userId) {
         imageInfos.push({ userId })
-        processedAtIds.add(userId)
-        return true
       }
-      return false
     }
     // 处理引用消息中的图片
     if (session.quote?.elements) {
@@ -528,32 +524,40 @@ export class MemeGenerator {
    * @throws {Error} 获取图片失败时抛出错误
    */
   private async fetchImages(session: any, imageInfos: ImageFetchInfo[]): Promise<ImagesAndInfos> {
-    const imageInfoKeys = imageInfos.map(v => JSON.stringify(v))
-    const imageMap: Record<string, Blob> = {}
-    const userInfoMap: Record<string, any> = {}
-    const uniqueKeys = [...new Set(imageInfoKeys)]
-    await Promise.all(uniqueKeys.map(async (key) => {
-      const info = JSON.parse(key)
+    // 处理每个图片信息
+    const images: Blob[] = []
+    const userInfos: any[] = []
+
+    await Promise.all(imageInfos.map(async (info, index) => {
       let url: string
       let userInfo: any = {}
+
       if ('src' in info) {
         url = info.src
       } else if ('userId' in info) {
-        // 这里调用getUserAvatar来获取用户头像URL
+        // 获取用户头像URL
         url = await getUserAvatar(session, info.userId)
         userInfo = { name: info.userId }
       }
-      // 接下来使用获取到的URL下载实际图片
-      const response = await axios.get(url, { responseType: 'arraybuffer', timeout: 8000 })
-      const buffer = Buffer.from(response.data)
-      const contentType = response.headers['content-type'] || 'image/png'
-      imageMap[key] = new Blob([buffer], { type: contentType })
-      userInfoMap[key] = userInfo
+
+      try {
+        // 下载图片
+        const response = await axios.get(url, { responseType: 'arraybuffer', timeout: 8000 })
+        const buffer = Buffer.from(response.data)
+        const contentType = response.headers['content-type'] || 'image/png'
+
+        // 将结果存储到对应索引位置
+        images[index] = new Blob([buffer], { type: contentType })
+        userInfos[index] = userInfo
+      } catch (error) {
+        this.logger.warn(`获取图片失败: ${error.message}`)
+        // 创建一个空白图片作为占位符
+        images[index] = new Blob([], { type: 'image/png' })
+        userInfos[index] = userInfo
+      }
     }))
-    return {
-      images: imageInfoKeys.map(key => imageMap[key]),
-      userInfos: imageInfoKeys.map(key => userInfoMap[key])
-    }
+
+    return { images, userInfos }
   }
 
   /**
