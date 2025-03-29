@@ -409,45 +409,46 @@ export function apply(ctx: Context, config: Config) {
         keywordToTemplateMap = memeGenerator.getAllKeywordMappings();
         allKeywords = Array.from(keywordToTemplateMap.keys());
       }
+      // 解析消息内容
       const rawContent = session.content;
-      // 处理at标签
       const elements = h.parse(rawContent);
-      let textContent = '';
-      const atElements = [];
-      elements.forEach(element => {
-        if (element.type === 'text') {
-          textContent += element.attrs.content || '';
-        } else if (element.type === 'at') {
-          atElements.push(element);
-          textContent += ' ';
-        }
-      });
-      // 处理消息内容
-      let content = textContent.trim();
+      // 提取第一个文本元素的内容用于关键词匹配
+      let firstTextContent = '';
+      let firstTextElement = elements.find(el => el.type === 'text');
+      if (firstTextElement && firstTextElement.attrs.content) {
+        firstTextContent = firstTextElement.attrs.content.trim();
+      }
       // 处理前缀要求
       if (config.requirePrefix) {
         const prefixes = [].concat(ctx.root.config.prefix).filter(Boolean);
         if (prefixes.length) {
-          const matched = prefixes.find(p => content.startsWith(p));
+          const matched = prefixes.find(p => firstTextContent.startsWith(p));
           if (!matched) return next();
-          content = content.slice(matched.length).trim();
+          firstTextContent = firstTextContent.slice(matched.length).trim();
         }
       }
-      // 提取关键词和参数
-      const spaceIndex = content.indexOf(' ');
-      const key = spaceIndex === -1 ? content : content.substring(0, spaceIndex);
+      // 提取关键词（第一个空格前的内容）
+      const spaceIndex = firstTextContent.indexOf(' ');
+      const key = spaceIndex === -1 ? firstTextContent : firstTextContent.substring(0, spaceIndex);
       // 检查关键词是否匹配
       const templateId = keywordToTemplateMap.get(key);
       if (!templateId) return next();
-      // 提取参数
-      const args = spaceIndex === -1 ? '' : content.substring(spaceIndex + 1);
-      // 构建参数元素
-      const paramElements = [];
-      if (args) {
-        paramElements.push(h('text', { content: args }));
+      // 准备参数元素
+      const paramElements: h[] = [];
+      // 处理第一个文本元素中的剩余部分
+      if (spaceIndex !== -1) {
+        const remainingText = firstTextContent.substring(spaceIndex + 1);
+        if (remainingText) {
+          paramElements.push(h('text', { content: remainingText }));
+        }
       }
-      atElements.forEach(at => {
-        paramElements.push(at);
+      // 添加除第一个文本元素外的所有其他元素
+      elements.forEach((element, index) => {
+        if (element.type === 'text' && index === elements.indexOf(firstTextElement)) {
+          // 跳过已处理的第一个文本元素
+          return;
+        }
+        paramElements.push(element);
       });
       // 生成表情包
       return memeGenerator.generateMeme(session, key, paramElements);
