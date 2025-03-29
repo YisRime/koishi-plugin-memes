@@ -411,6 +411,7 @@ export function apply(ctx: Context, config: Config) {
       }
       // 解析消息内容
       const rawContent = session.content;
+      if (!rawContent) return next();
       const elements = h.parse(rawContent);
       // 提取第一个文本元素的内容用于关键词匹配
       let firstTextContent = '';
@@ -444,12 +445,31 @@ export function apply(ctx: Context, config: Config) {
       }
       // 添加除第一个文本元素外的所有其他元素
       elements.forEach((element, index) => {
+        // 明确跳过已处理的第一个文本元素
         if (element.type === 'text' && index === elements.indexOf(firstTextElement)) {
-          // 跳过已处理的第一个文本元素
           return;
         }
-        paramElements.push(element);
+        // 不同类型元素分别处理，但统一添加到参数列表
+        if (element.type === 'at' && element.attrs.id) {
+          paramElements.push(element);
+        } else {
+          paramElements.push(element);
+        }
       });
+      // 记录参数元素
+      if (paramElements.length > 0) {
+        paramElements.forEach((el, i) => {
+          if (el.type === 'at') {
+            logger.info(`参数 ${i+1}: at元素，id=${el.attrs.id}`);
+          } else if (el.type === 'text') {
+            logger.info(`参数 ${i+1}: 文本元素，内容="${el.attrs.content}"`);
+          } else if (el.type === 'img') {
+            logger.info(`参数 ${i+1}: 图片元素，src=${el.attrs.src?.substring(0, 20)}...`);
+          } else {
+            logger.info(`参数 ${i+1}: ${el.type}元素`);
+          }
+        });
+      }
       // 生成表情包
       return memeGenerator.generateMeme(session, key, paramElements);
     });
