@@ -356,10 +356,10 @@ export class MemeGenerator {
    * @async
    * @param {any} session - 会话上下文
    * @param {string} key - 模板ID或关键词
-   * @param {h[]} args - 参数元素数组
+   * @param {h[]|string} args - 参数元素数组或原始文本
    * @returns {Promise<h|string>} 生成的图片元素或错误信息
    */
-  async generateMeme(session: any, key: string, args: h[]) {
+  async generateMeme(session: any, key: string, args: h[] | string) {
     try {
       const templateInfo = await this.findTemplate(key);
       if (!templateInfo) {
@@ -371,9 +371,13 @@ export class MemeGenerator {
         min_texts = 0, max_texts = 0,
         default_texts = []
       } = templateInfo.params_type || {};
+      // 字符串转换为元素数组
+      const elements: h[] = typeof args === 'string'
+        ? args.trim() ? [h('text', { content: args })] : []
+        : args;
       // 解析参数
       const { imageInfos: origImageInfos, texts: origTexts, options } =
-        await this.parseArgs(session, args, templateInfo)
+        await this.parseArgs(session, elements, templateInfo)
           .catch(e => { throw new Error(`参数解析失败: ${e.message}`) })
       // 添加用户头像和默认文本
       let imageInfos = [...origImageInfos]
