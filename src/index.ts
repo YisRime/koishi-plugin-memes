@@ -402,48 +402,61 @@ export function apply(ctx: Context, config: Config) {
       }
     })
 
-  // 关键词触发中间件
+  // 关键词触发监听器
   if (config.useMiddleware) {
-    ctx.middleware(async (session, next) => {
+    ctx.on('message', async (session) => {
       if (allKeywords.length === 0) {
         keywordToTemplateMap = memeGenerator.getAllKeywordMappings();
         allKeywords = Array.from(keywordToTemplateMap.keys());
       }
-      // 处理前缀和原始内容
+      // 解析消息内容
       const rawContent = session.content;
-      if (!rawContent) return next();
-      let textContent = rawContent.trim();
+      if (!rawContent) return;
+      const elements = h.parse(rawContent);
+      // 提取第一个文本元素的内容用于关键词匹配
+      let firstTextContent = '';
+      let firstTextElement = elements.find(el => el.type === 'text');
+      if (firstTextElement && firstTextElement.attrs.content) {
+        firstTextContent = firstTextElement.attrs.content.trim();
+      }
+      // 处理前缀要求
       if (config.requirePrefix) {
         const prefixes = [].concat(ctx.root.config.prefix).filter(Boolean);
         if (prefixes.length) {
-          const matched = prefixes.find(p => textContent.startsWith(p));
-          if (!matched) return next();
-          textContent = textContent.slice(matched.length).trim();
+          const matched = prefixes.find(p => firstTextContent.startsWith(p));
+          if (!matched) return;
+          firstTextContent = firstTextContent.slice(matched.length).trim();
         }
       }
-      // 提取关键词
-      const spaceIndex = textContent.indexOf(' ');
-      if (spaceIndex === -1) return next();
-      const key = textContent.substring(0, spaceIndex).trim();
-      if (!key || !keywordToTemplateMap.has(key)) return next();
-      // 获取添加剩余内容
-      const remainingText = textContent.substring(spaceIndex + 1).trim();
+      // 提取关键词（第一个空格前的内容）
+      const spaceIndex = firstTextContent.indexOf(' ');
+      const key = spaceIndex === -1 ? firstTextContent : firstTextContent.substring(0, spaceIndex);
+      // 检查关键词是否匹配
+      const templateId = keywordToTemplateMap.get(key);
+      if (!templateId) return;
+      // 准备参数元素
       const paramElements: h[] = [];
-      if (remainingText) {
-        paramElements.push(h('text', { content: remainingText }));
+      // 处理第一个文本元素中的剩余部分
+      if (spaceIndex !== -1) {
+        const remainingText = firstTextContent.substring(spaceIndex + 1);
+        if (remainingText) {
+          paramElements.push(h('text', { content: remainingText }));
+        }
       }
-      const elements = h.parse(rawContent);
-      elements.forEach(element => {
-        if (element.type !== 'text') {
-          if (element.type === 'at' && element.attrs?.id) {
-            paramElements.push(h('at', { id: element.attrs.id }));
-          } else if (element.type === 'img' && element.attrs?.src) {
-            paramElements.push(h('img', { src: element.attrs.src }));
-          } else {
-            paramElements.push(element);
-          }
+      // 添加除第一个文本元素外的所有其他元素
+      elements.forEach((element, index) => {
+        // 明确跳过已处理的第一个文本元素
+        if (element.type === 'text' && index === elements.indexOf(firstTextElement)) {
+          return;
+        }
+        // 不同类型元素分别处理，但统一添加到参数列表
+        if (element.type === 'at' && element.attrs.id) {
+          paramElements.push(element);
+        } else {
+          paramElements.push(element);
         }
       });
+      // 生成表情包
       return memeGenerator.generateMeme(session, key, paramElements);
     });
   }
