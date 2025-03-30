@@ -77,7 +77,6 @@ export async function autoRecall(session: any, message: string | number, delay: 
     }, delay)
     return null
   } catch (error) {
-    logger.info(`消息处理失败：${error}`)
     return null
   }
 }
@@ -105,23 +104,7 @@ export function apply(ctx: Context, config: Config) {
       if (!key) {
         return autoRecall(session, '请提供模板ID或关键词')
       }
-
-      logger.info(`[命令] 接收到表情生成请求 - 关键词: ${key}`)
-
       const elements = args ? [h('text', { content: args })] : []
-
-      if (elements.length > 0) {
-        elements.forEach((el, i) => {
-          if (el.type === 'text') {
-            logger.info(`[命令] 参数 ${i+1}: 文本参数 "${el.attrs.content}"`)
-          } else {
-            logger.info(`[命令] 参数 ${i+1}: ${el.type}类型参数`)
-          }
-        })
-      } else {
-        logger.info(`[命令] 无额外参数`)
-      }
-
       return memeGenerator.generateMeme(session, key, elements)
     })
 
@@ -418,80 +401,50 @@ export function apply(ctx: Context, config: Config) {
       }
     })
 
-  // 使用ctx.on监听消息代替中间件
+  // 监听消息
   if (config.useMiddleware) {
     ctx.on('message', async (session) => {
-      // 如果关键词表为空，则初始化
       if (allKeywords.length === 0) {
         keywordToTemplateMap = memeGenerator.getAllKeywordMappings();
         allKeywords = Array.from(keywordToTemplateMap.keys());
-        logger.info(`[监听] 已加载 ${allKeywords.length} 个关键词映射`)
       }
-
       // 解析消息内容
       const rawContent = session.content;
       if (!rawContent) return;
-
       const elements = h.parse(rawContent);
-
-      // 提取第一个文本元素
       const firstTextElement = elements.find(el => el.type === 'text');
-      if (!firstTextElement || !firstTextElement.attrs.content) return;
-
-      let firstTextContent = firstTextElement.attrs.content.trim();
-
-      // 处理前缀要求
+      if (!firstTextElement?.attrs?.content) return;
+      // 处理消息文本和前缀
+      let content = firstTextElement.attrs.content.trim();
       if (config.requirePrefix) {
         const prefixes = [].concat(ctx.root.config.prefix).filter(Boolean);
         if (prefixes.length) {
-          const matched = prefixes.find(p => firstTextContent.startsWith(p));
+          const matched = prefixes.find(p => content.startsWith(p));
           if (!matched) return;
-          firstTextContent = firstTextContent.slice(matched.length).trim();
+          content = content.slice(matched.length).trim();
         }
       }
-
-      // 提取关键词（第一个空格前的内容）
-      const spaceIndex = firstTextContent.indexOf(' ');
-      const key = spaceIndex === -1 ? firstTextContent : firstTextContent.substring(0, spaceIndex);
-
-      // 检查关键词是否匹配
+      // 提取并检查关键词和参数
+      const spaceIndex = content.indexOf(' ');
+      const key = spaceIndex === -1 ? content : content.substring(0, spaceIndex);
       const templateId = keywordToTemplateMap.get(key);
       if (!templateId) return;
-
-      logger.info(`[监听] 触发关键词: ${key} -> 模板: ${templateId}`);
-
-      // 准备参数元素
+      // 准备参数
       const paramElements: h[] = [];
-
-      // 处理第一个文本元素中的剩余部分
       if (spaceIndex !== -1) {
-        const remainingText = firstTextContent.substring(spaceIndex + 1);
+        const remainingText = content.substring(spaceIndex + 1).trim();
         if (remainingText) {
           paramElements.push(h('text', { content: remainingText }));
-          logger.info(`[监听] 参数文本: "${remainingText}"`);
         }
       }
-
-      // 添加除第一个文本元素外的所有其他元素
-      elements.forEach((element, index) => {
-        // 明确跳过已处理的第一个文本元素
-        if (element.type === 'text' && index === elements.indexOf(firstTextElement)) {
-          return;
+      // 添加其他元素
+      for (let i = 0; i < elements.length; i++) {
+        const element = elements[i];
+        if (element !== firstTextElement) {
+          paramElements.push(element);
         }
-
-        paramElements.push(element);
-
-        if (element.type === 'at') {
-          logger.info(`[监听] 参数 ${paramElements.length}: at元素，id=${element.attrs.id}`);
-        } else if (element.type === 'img') {
-          logger.info(`[监听] 参数 ${paramElements.length}: 图片元素`);
-        } else {
-          logger.info(`[监听] 参数 ${paramElements.length}: ${element.type}元素`);
-        }
-      });
-
-      // 生成表情包
-      return memeGenerator.generateMeme(session, key, paramElements);
+      }
+      await session.send(await memeGenerator.generateMeme(session, key, paramElements));
     });
   }
 
