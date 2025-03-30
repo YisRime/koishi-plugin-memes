@@ -408,10 +408,13 @@ export function apply(ctx: Context, config: Config) {
       if (allKeywords.length === 0) {
         keywordToTemplateMap = memeGenerator.getAllKeywordMappings();
         allKeywords = Array.from(keywordToTemplateMap.keys());
+        logger.info(`初始化关键词映射，共 ${allKeywords.length} 个关键词`);
       }
       // 获取原始消息内容
       const rawContent = session.content?.trim();
       if (!rawContent) return;
+      logger.info(`[中间件] 收到原始消息: "${rawContent}"`);
+
       // 处理前缀并提取基础命令文本
       let commandText = rawContent;
       if (config.requirePrefix) {
@@ -420,15 +423,26 @@ export function apply(ctx: Context, config: Config) {
           const matched = prefixes.find(p => commandText.startsWith(p));
           if (!matched) return;
           commandText = commandText.slice(matched.length).trim();
+          logger.info(`[中间件] 去除前缀后的命令: "${commandText}"`);
         }
       }
+
       // 提取关键词
       const spaceIndex = commandText.indexOf(' ');
       const key = spaceIndex === -1 ? commandText : commandText.substring(0, spaceIndex);
+      logger.info(`[中间件] 提取的关键词: "${key}", 全部关键词数量: ${allKeywords.length}`);
+
       // 检查关键词匹配
-      if (!keywordToTemplateMap.has(key)) return;
+      if (!keywordToTemplateMap.has(key)) {
+        logger.info(`[中间件] 未匹配到关键词: "${key}"`);
+        return;
+      }
+      logger.info(`[中间件] 匹配到关键词: "${key}" => 模板: "${keywordToTemplateMap.get(key)}"`);
+
       // 提取参数
       const argContent = spaceIndex === -1 ? '' : commandText.substring(spaceIndex + 1);
+      logger.info(`[中间件] 提取的参数: "${argContent}"`);
+
       const elements = argContent ? [h('text', { content: argContent })] : [];
       // 生成表情包
       return memeGenerator.generateMeme(session, key, elements);
