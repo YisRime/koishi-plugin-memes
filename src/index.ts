@@ -409,42 +409,48 @@ export function apply(ctx: Context, config: Config) {
         keywordToTemplateMap = memeGenerator.getAllKeywordMappings();
         allKeywords = Array.from(keywordToTemplateMap.keys());
       }
-      // 解析消息内容
-      const rawContent = session.content;
-      if (!rawContent) return next();
-      // 处理元素结构
-      const elements = rawContent.startsWith('<') ? h.parse(rawContent) : [h('text', { content: rawContent })];
-      // 提取第一个文本元素的内容用于关键词匹配
-      const firstTextElement = elements.find(el => el.type === 'text');
-      if (!firstTextElement || !firstTextElement.attrs.content?.trim()) return next();
-      let firstTextContent = firstTextElement.attrs.content.trim();
-      // 处理前缀要求
+      // 快速检查消息是否存在
+      const content = session.content?.trim();
+      if (!content) return next();
+      // 解析消息获取文本内容
+      let mainText = '';
+      const otherElements = [];
+      if (content.startsWith('<')) {
+        // 解析富文本消息
+        const elements = h.parse(content);
+        for (const el of elements) {
+          if (el.type === 'text' && !mainText) {
+            mainText = el.attrs.content?.trim() || '';
+          } else if (el.type !== 'text') {
+            otherElements.push(el);
+          }
+        }
+      } else {
+        mainText = content;
+      }
+      if (!mainText) return next();
+      // 处理前缀
       if (config.requirePrefix) {
         const prefixes = [].concat(ctx.root.config.prefix).filter(Boolean);
         if (prefixes.length) {
-          const matched = prefixes.find(p => firstTextContent.startsWith(p));
+          const matched = prefixes.find(p => mainText.startsWith(p));
           if (!matched) return next();
-          firstTextContent = firstTextContent.slice(matched.length).trim();
+          mainText = mainText.slice(matched.length).trim();
         }
       }
-      // 提取关键词和参数文本
-      const spaceIndex = firstTextContent.indexOf(' ');
-      const key = spaceIndex === -1 ? firstTextContent : firstTextContent.substring(0, spaceIndex);
-      // 检查关键词是否匹配
-      const templateId = keywordToTemplateMap.get(key);
-      if (!templateId) return next();
-      // 提取参数文本
-      let args = '';
-      if (spaceIndex !== -1) {
-        args = firstTextContent.substring(spaceIndex + 1);
-      }
-      // 创建元素数组
-      const paramElements = args ? [h('text', { content: args })] : [];
-      elements.forEach((element, index) => {
-        if (!(element.type === 'text' && index === elements.indexOf(firstTextElement))) {
-          paramElements.push(element);
-        }
-      });
+      // 提取关键词和参数（一步完成）
+      const spaceIndex = mainText.indexOf(' ');
+      const key = spaceIndex === -1 ? mainText : mainText.substring(0, spaceIndex);
+      // 检查关键词匹配
+      if (!keywordToTemplateMap.has(key)) return next();
+      // 构建参数
+      const args = spaceIndex !== -1 ? mainText.substring(spaceIndex + 1) : '';
+      const paramElements = [];
+      // 仅当有参数时添加文本元素
+      if (args) paramElements.push(h('text', { content: args }));
+      // 添加其他非文本元素
+      paramElements.push(...otherElements);
+      // 生成表情包
       return memeGenerator.generateMeme(session, key, paramElements);
     });
   }
