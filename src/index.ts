@@ -409,10 +409,9 @@ export function apply(ctx: Context, config: Config) {
         keywordToTemplateMap = memeGenerator.getAllKeywordMappings();
         allKeywords = Array.from(keywordToTemplateMap.keys());
       }
-      // 解析消息内容
+      // 处理前缀和原始内容
       const rawContent = session.content;
       if (!rawContent) return next();
-      // 处理前缀
       let textContent = rawContent.trim();
       if (config.requirePrefix) {
         const prefixes = [].concat(ctx.root.config.prefix).filter(Boolean);
@@ -422,23 +421,27 @@ export function apply(ctx: Context, config: Config) {
           textContent = textContent.slice(matched.length).trim();
         }
       }
-      // 检查空格
+      // 提取关键词
       const spaceIndex = textContent.indexOf(' ');
       if (spaceIndex === -1) return next();
-      // 提取并检查关键词
-      const key = textContent.substring(0, spaceIndex);
-      const templateId = keywordToTemplateMap.get(key);
-      if (!templateId) return next();
-      // 提取并处理剩余内容
+      const key = textContent.substring(0, spaceIndex).trim();
+      if (!key || !keywordToTemplateMap.has(key)) return next();
+      // 获取添加剩余内容
       const remainingText = textContent.substring(spaceIndex + 1).trim();
       const paramElements: h[] = [];
       if (remainingText) {
         paramElements.push(h('text', { content: remainingText }));
       }
       const elements = h.parse(rawContent);
-      elements.forEach((element) => {
+      elements.forEach(element => {
         if (element.type !== 'text') {
-          paramElements.push(element);
+          if (element.type === 'at' && element.attrs?.id) {
+            paramElements.push(h('at', { id: element.attrs.id }));
+          } else if (element.type === 'img' && element.attrs?.src) {
+            paramElements.push(h('img', { src: element.attrs.src }));
+          } else {
+            paramElements.push(element);
+          }
         }
       });
       return memeGenerator.generateMeme(session, key, paramElements);
