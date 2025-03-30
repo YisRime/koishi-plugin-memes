@@ -402,29 +402,31 @@ export function apply(ctx: Context, config: Config) {
       }
     })
 
-  // 关键词触发中间件
+  // 关键词触发功能
   if (config.useMiddleware) {
-    ctx.middleware(async (session, next) => {
+    ctx.on('message', async (session) => {
       if (allKeywords.length === 0) {
         keywordToTemplateMap = memeGenerator.getAllKeywordMappings();
         allKeywords = Array.from(keywordToTemplateMap.keys());
       }
+      // 获取原始消息内容
       const rawContent = session.content?.trim();
-      if (!rawContent) return next();
+      if (!rawContent) return;
       // 处理前缀并提取基础命令文本
       let commandText = rawContent;
       if (config.requirePrefix) {
         const prefixes = [].concat(ctx.root.config.prefix).filter(Boolean);
         if (prefixes.length) {
           const matched = prefixes.find(p => commandText.startsWith(p));
-          if (!matched) return next();
+          if (!matched) return;
           commandText = commandText.slice(matched.length).trim();
         }
       }
-      // 提取并检查关键词
+      // 提取关键词
       const spaceIndex = commandText.indexOf(' ');
       const key = spaceIndex === -1 ? commandText : commandText.substring(0, spaceIndex);
-      if (!keywordToTemplateMap.has(key)) return next();
+      // 检查关键词匹配
+      if (!keywordToTemplateMap.has(key)) return;
       // 提取参数
       const argContent = spaceIndex === -1 ? '' : commandText.substring(spaceIndex + 1);
       const elements = argContent ? [h('text', { content: argContent })] : [];
