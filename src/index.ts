@@ -412,19 +412,12 @@ export function apply(ctx: Context, config: Config) {
       // 解析消息内容
       const rawContent = session.content;
       if (!rawContent) return next();
-      let firstTextContent = '';
-      // 处理HTML元素
-      if (rawContent.startsWith('<')) {
-        const elements = h.parse(rawContent);
-        const firstTextElement = elements.find(el => el.type === 'text');
-        if (firstTextElement && firstTextElement.attrs.content) {
-          firstTextContent = firstTextElement.attrs.content.trim();
-        } else {
-          return next();
-        }
-      } else {
-        firstTextContent = rawContent.trim();
-      }
+      // 处理元素结构
+      const elements = rawContent.startsWith('<') ? h.parse(rawContent) : [h('text', { content: rawContent })];
+      // 提取第一个文本元素的内容用于关键词匹配
+      const firstTextElement = elements.find(el => el.type === 'text');
+      if (!firstTextElement || !firstTextElement.attrs.content?.trim()) return next();
+      let firstTextContent = firstTextElement.attrs.content.trim();
       // 处理前缀要求
       if (config.requirePrefix) {
         const prefixes = [].concat(ctx.root.config.prefix).filter(Boolean);
@@ -434,17 +427,25 @@ export function apply(ctx: Context, config: Config) {
           firstTextContent = firstTextContent.slice(matched.length).trim();
         }
       }
-      // 提取并检查关键词
+      // 提取关键词和参数文本
       const spaceIndex = firstTextContent.indexOf(' ');
       const key = spaceIndex === -1 ? firstTextContent : firstTextContent.substring(0, spaceIndex);
+      // 检查关键词是否匹配
       const templateId = keywordToTemplateMap.get(key);
       if (!templateId) return next();
       // 提取参数文本
-      let params = '';
+      let args = '';
       if (spaceIndex !== -1) {
-        params = firstTextContent.substring(spaceIndex + 1);
+        args = firstTextContent.substring(spaceIndex + 1);
       }
-      return memeGenerator.generateMeme(session, key, params || rawContent);
+      // 创建元素数组
+      const paramElements = args ? [h('text', { content: args })] : [];
+      elements.forEach((element, index) => {
+        if (!(element.type === 'text' && index === elements.indexOf(firstTextElement))) {
+          paramElements.push(element);
+        }
+      });
+      return memeGenerator.generateMeme(session, key, paramElements);
     });
   }
 
