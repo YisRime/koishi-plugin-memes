@@ -20,39 +20,39 @@
 
 ### 基础命令
 
-- `memes <key> [args]` - 使用模板ID或关键词生成表情
-- `memes.list [page]` - 列出可用模板列表（可用"all"参数查看全部）
+- `memes [page]` - 列出可用模板列表（可用"all"参数查看全部）
+- `memes.make <key> [args]` - 使用模板ID或关键词生成表情
 - `memes.info [key]` - 获取模板详细信息和使用参数（支持模板ID和关键词）
 - `memes.search <keyword>` - 搜索表情模板（支持模板ID、关键词和标签）
 - `memes.refresh` - 刷新表情模板缓存（需要管理员权限）
 
 ### 内置模板
 
-- `memes.make.jiazi [target]` - 生成"你要被夹"图片
-- `memes.make.tntboom [target]` - 生成"你要被炸"图片
+- `make.jiazi [target]` - 生成"你要被夹"图片
+- `make.tntboom [target]` - 生成"你要被炸"图片
 
 ### 自定义API（需开启loadApi）
 
-- `memes.api [type] [arg1] [arg2]` - 使用自定义API生成表情
-- `memes.api.list [page]` - 列出可用自定义API表情
-- `memes.api.reload` - 重载自定义API配置（需要管理员权限）
+- `meme [page]` - 列出可用自定义API表情
+- `meme.make [type] [arg1] [arg2]` - 使用自定义API生成表情
+- `meme.reload` - 重载自定义API配置（需要管理员权限）
 
 ### 示例
 
 1. 查看模板列表：
 
    ```text
-   memes.list
-   memes.list 2    # 查看第二页
-   memes.list all  # 查看所有模板
+   memes
+   memes 2    # 查看第二页
+   memes all  # 查看所有模板
    ```
 
 2. 生成表情包：
 
    ```text
-   memes play @用户            # 基础用法
-   memes ba_say 你好 -character=1  # 使用参数
-   memes 摸 @用户 -circle     # 使用关键词和参数
+   memes.make play @用户            # 基础用法
+   memes.make ba_say 你好 -character=1  # 使用参数
+   memes.make 摸 @用户 -circle     # 使用关键词和参数
    ```
 
 3. 查询模板信息：
@@ -65,16 +65,16 @@
 4. 内置模板：
 
    ```text
-   memes.make.jiazi @用户  # 生成夹子图
-   memes.make.jiazi 123456789  # 使用QQ号
-   memes.make.tntboom  # 使用自己头像
+   make.jiazi @用户  # 生成夹子图
+   make.jiazi 123456789  # 使用QQ号
+   make.tntboom  # 使用自己头像
    ```
 
 5. 自定义API：
 
    ```text
-   memes.api.list       # 查看自定义API列表
-   memes.api 吃 @用户  # 生成"吃@用户"的表情包
+   meme       # 查看自定义API列表
+   meme.make 吃 @用户  # 生成"吃@用户"的表情包
    ```
 
 ## 参数说明

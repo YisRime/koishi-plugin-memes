@@ -74,51 +74,10 @@ export class MemeAPI {
    * @param meme 父命令对象
    */
   registerCommands(meme: Command) {
-    const api = meme.subcommand('.api [type:string] [arg1:string] [arg2:string]', '使用自定义API生成表情')
-      .usage('输入类型并补充对应参数来生成对应表情，使用关键词匹配')
-      .example('memes.api 吃 @用户 - 生成"吃"表情')
-      .example('memes.api - 随机使用模板生成表情')
-      .action(async ({ session }, type, arg1, arg2) => {
-        // 查找索引
-        const index = !type
-          ? Math.floor(Math.random() * this.apiConfigs.length)
-          : this.apiConfigs.findIndex(config =>
-              config.description.split('|')[0].trim() === type.trim()
-            );
-        if (index === -1) {
-          return autoRecall(session, `未找到表情"${type}"`);
-        }
-
-        const config = this.apiConfigs[index];
-        const parsedArg1 = parseTarget(arg1)
-        const parsedArg2 = parseTarget(arg2)
-        // 替换占位符
-        let apiUrl = config.apiEndpoint
-          .replace(/\${arg1}/g, parsedArg1)
-          .replace(/\${arg2}/g, parsedArg2)
-        // 请求图片
-        try {
-          const response = await axios.get(apiUrl, {
-            timeout: 8000,
-            validateStatus: () => true,
-            responseType: 'text'
-          })
-          let imageUrl = apiUrl;
-          if (response.headers['content-type']?.includes('application/json')) {
-            const data = typeof response.data === 'string'
-              ? JSON.parse(response.data)
-              : response.data
-            if (data?.code === 200) imageUrl = data.data;
-          }
-          return h('image', { url: imageUrl })
-        } catch (err) {
-          return autoRecall(session, '生成出错：' + err.message);
-        }
-      })
-    api.subcommand('.list [page:string]', '列出可用模板列表')
+    const api = meme.subcommand('meme [page:string]', '列出可用模板列表')
       .usage('输入页码查看列表或使用"all"查看所有模板')
-      .example('memes.api.list - 查看第一页API模板列表')
-      .example('memes.api.list all - 查看所有API模板列表')
+      .example('meme - 查看第一页API模板列表')
+      .example('meme all - 查看所有API模板列表')
       .action(({}, page) => {
         const ITEMS_PER_PAGE = 10
         const showAll = page === 'all'
@@ -163,6 +122,47 @@ export class MemeAPI {
             : "表情模板列表\n"
 
         return header + displayLines.join('\n')
+      })
+    api.subcommand('.make [type:string] [arg1:string] [arg2:string]', '使用自定义API生成表情')
+      .usage('输入类型并补充对应参数来生成对应表情，使用关键词匹配')
+      .example('meme.make 吃 @用户 - 生成"吃"表情')
+      .example('meme.make - 随机使用模板生成表情')
+      .action(async ({ session }, type, arg1, arg2) => {
+        // 查找索引
+        const index = !type
+          ? Math.floor(Math.random() * this.apiConfigs.length)
+          : this.apiConfigs.findIndex(config =>
+              config.description.split('|')[0].trim() === type.trim()
+            );
+        if (index === -1) {
+          return autoRecall(session, `未找到表情"${type}"`);
+        }
+
+        const config = this.apiConfigs[index];
+        const parsedArg1 = parseTarget(arg1)
+        const parsedArg2 = parseTarget(arg2)
+        // 替换占位符
+        let apiUrl = config.apiEndpoint
+          .replace(/\${arg1}/g, parsedArg1)
+          .replace(/\${arg2}/g, parsedArg2)
+        // 请求图片
+        try {
+          const response = await axios.get(apiUrl, {
+            timeout: 8000,
+            validateStatus: () => true,
+            responseType: 'text'
+          })
+          let imageUrl = apiUrl;
+          if (response.headers['content-type']?.includes('application/json')) {
+            const data = typeof response.data === 'string'
+              ? JSON.parse(response.data)
+              : response.data
+            if (data?.code === 200) imageUrl = data.data;
+          }
+          return h('image', { url: imageUrl })
+        } catch (err) {
+          return autoRecall(session, '生成出错：' + err.message);
+        }
       })
     api.subcommand('.reload', '重载自定义API配置', { authority: 3 })
       .usage('重新加载本地API配置文件')

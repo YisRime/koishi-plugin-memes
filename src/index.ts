@@ -96,25 +96,10 @@ export function apply(ctx: Context, config: Config) {
   /**
    * 主命令: 制作表情包
    */
-  const meme = ctx.command('memes <key:string> [args:text]', '制作表情包')
-    .usage('输入模板ID或关键词并添加参数和选项来生成表情包\n例:memes 模板ID/关键词 文本/图片 -参数=值\n多个文本以空格分隔,包含空格的文本须带引号\n可手动添加图片或@用户添加头像\n需使用"."触发子指令，如:memes.list')
-    .example('memes ba_say 你好 -character=1 - 使用模板ID"ba_say"生成"心奈说:你好"的表情')
-    .example('memes 摸 @用户 - 使用关键词"摸"生成摸头表情')
-    .action(async ({ session }, key, args) => {
-      if (!key) {
-        return autoRecall(session, '请提供模板ID或关键词')
-      }
-      const elements = args ? [h('text', { content: args })] : []
-      return memeGenerator.generateMeme(session, key, elements)
-    })
-
-  /**
-   * 子命令: 列出可用模板列表
-   */
-  meme.subcommand('.list [page:string]', '列出可用模板列表')
+  const meme = ctx.command('memes [page:string]', '列出可用模板列表')
     .usage('输入页码查看列表或使用"all"查看所有模板')
-    .example('memes.list - 查看第一页模板列表')
-    .example('memes.list all - 查看所有模板列表')
+    .example('memes - 查看第一页模板列表')
+    .example('memes all - 查看所有模板列表')
     .action(async ({ session }, page) => {
       let result;
       try {
@@ -228,6 +213,21 @@ export function apply(ctx: Context, config: Config) {
           ? `表情模板列表（${validPage}/${totalPages}页）\n`
           : `表情模板列表（共${totalTemplates}个）\n`
       return header + displayLines.join('\n')
+    })
+
+  /**
+   * 子命令: 列出可用模板列表
+   */
+  meme.subcommand('.make <key:string> [args:text]', '制作表情包')
+    .usage('输入模板ID或关键词并添加参数和选项来生成表情包\n例:memes 模板ID/关键词 文本/图片 -参数=值\n多个文本以空格分隔,包含空格的文本须带引号\n可手动添加图片或@用户添加头像\n需使用"."触发子指令，如:memes.list')
+    .example('memes.make ba_say 你好 -character=1 - 使用模板ID"ba_say"生成"心奈说:你好"的表情')
+    .example('memes.make 摸 @用户 - 使用关键词"摸"生成摸头表情')
+    .action(async ({ session }, key, args) => {
+      if (!key) {
+        return autoRecall(session, '请提供模板ID或关键词')
+      }
+      const elements = args ? [h('text', { content: args })] : []
+      return memeGenerator.generateMeme(session, key, elements)
     })
 
   /**
