@@ -1,7 +1,5 @@
 import { Context, Command, h, Logger } from 'koishi'
-import { parseTarget, autoRecall } from './index'
-import axios from 'axios'
-import fs from 'fs'
+import { parseTarget, autoRecall, loadOrCreateConfig, readJsonFile } from './utils'
 import path from 'path'
 
 /**
@@ -15,164 +13,103 @@ export interface ApiConfig {
 
 /**
  * 外部表情 API 处理类
- * 负责加载、管理和调用外部表情 API
+ * 负责管理自定义表情 API 的配置并注册相关命令
  */
 export class MemeAPI {
-  private ctx: Context;
-  private apiConfigs: ApiConfig[] = [];
-  private logger: Logger;
   private configPath: string;
 
   /**
    * 创建一个 MemeAPI 实例
-   * @param ctx Koishi 上下文
+   * @param ctx Koishi 上下文对象
    * @param logger 日志记录器
-   * @param generator 表情生成器实例
    */
-  constructor(ctx: Context, logger: Logger) {
-    this.ctx = ctx
-    this.logger = logger
+  constructor(
+    private ctx: Context,
+    private logger: Logger
+  ) {
     this.configPath = path.resolve(this.ctx.baseDir, 'data', 'memes-api.json')
-    this.loadConfig()
+    // 确保配置文件存在
+    const defaultConfig: ApiConfig[] = [{
+      description: "示例配置",
+      apiEndpoint: "https://example.com/api?qq=${arg1}&target=${arg2}"
+    }];
+    loadOrCreateConfig(this.configPath, defaultConfig, this.logger)
   }
 
   /**
-   * 加载外部配置文件
-   * 如果配置文件不存在，会创建默认配置
-   * @private
-   */
-  private loadConfig() {
-    if (!fs.existsSync(this.configPath)) {
-      try {
-        const defaultConfig: ApiConfig[] = [
-          {
-            description: "示例配置",
-            apiEndpoint: "https://example.com/api?qq=${arg1}&target=${arg2}"
-          }
-        ]
-        fs.writeFileSync(this.configPath, JSON.stringify(defaultConfig, null, 2), 'utf-8')
-        this.logger.info(`已创建配置文件：${this.configPath}`)
-        this.apiConfigs = defaultConfig
-      } catch (err) {
-        this.logger.error(`创建配置失败：${err.message}`)
-      }
-      return
-    }
-    // 读取配置文件
-    try {
-      const content = fs.readFileSync(this.configPath, 'utf-8')
-      this.apiConfigs = JSON.parse(content)
-      this.logger.info(`已加载配置文件：${this.apiConfigs.length}项`)
-    } catch (err) {
-      this.logger.error(`加载配置失败：${err.message}`)
-    }
-  }
-
-  /**
-   * 注册所有子命令
-   * 包括 api、list 和 reload 子命令
+   * 注册所有表情相关的子命令
    * @param meme 父命令对象
    */
   registerCommands(meme: Command) {
-    const api = meme.subcommand('meme [page:string]', '列出可用模板列表')
-      .usage('输入页码查看列表或使用"all"查看所有模板')
-      .example('meme - 查看第一页API模板列表')
-      .example('meme all - 查看所有API模板列表')
-      .action(({}, page) => {
-        const ITEMS_PER_PAGE = 10
-        const showAll = page === 'all'
-        const pageNum = typeof page === 'string' ? parseInt(page) || 1 : (page || 1)
-        // 格式化表情描述
-        const typeDescriptions = this.apiConfigs.map(config => config.description)
+    const api = meme.subcommand('meme [page:string]', '自定义表情生成')
+      .usage('使用自定义 API 生成表情\n查看自定义 API 表情模板列表')
+      .example('meme all - 查看表情模板列表')
+      .action(async ({ }, page) => {
+        const apiConfigs = readJsonFile<ApiConfig[]>(this.configPath, this.logger) || [];
+        const typeDescriptions = apiConfigs.map(config => config.description)
         const lines = []
         let currentLine = ''
         let currentWidth = 0
         const MAX_WIDTH = 36
-        const SEPARATOR = ' '
-        for (const description of typeDescriptions) {
-          let descWidth = 0;
-          for (const char of description) {
-            descWidth += /[\u4e00-\u9fa5\u3000-\u303f\uff00-\uffef]/.test(char) ? 2 : 1;
+        for (const desc of typeDescriptions) {
+          let descWidth = 0
+          for (const char of desc) {
+            descWidth += /[\u4e00-\u9fa5\u3000-\u303f\uff00-\uffef]/.test(char) ? 2 : 1
           }
           if (currentWidth + descWidth + 1 > MAX_WIDTH && currentWidth > 0) {
             lines.push(currentLine)
-            currentLine = description
+            currentLine = desc
             currentWidth = descWidth
           } else if (currentLine.length === 0) {
-            currentLine = description
+            currentLine = desc
             currentWidth = descWidth
           } else {
-            currentLine += SEPARATOR + description
+            currentLine += ' ' + desc
             currentWidth += 1 + descWidth
           }
         }
-        if (currentLine.length > 0) {
-          lines.push(currentLine)
-        }
+        if (currentLine) lines.push(currentLine)
+        // 文本分页
+        const ITEMS_PER_PAGE = 10
+        const showAll = page === 'all'
+        const pageNum = parseInt(page) || 1
         const totalPages = Math.ceil(lines.length / ITEMS_PER_PAGE)
         const validPage = Math.max(1, Math.min(pageNum, showAll ? 1 : totalPages))
         const displayLines = showAll
           ? lines
           : lines.slice((validPage - 1) * ITEMS_PER_PAGE, validPage * ITEMS_PER_PAGE)
-        // 构建页面
-        const header = showAll
-          ? `表情模板列表（共${this.apiConfigs.length}项）\n`
-          : totalPages > 1
-            ? `表情模板列表（${validPage}/${totalPages}页）\n`
-            : "表情模板列表\n"
-
+        const header = showAll || totalPages <= 1
+          ? `表情模板列表（共${apiConfigs.length}项）\n`
+          : `表情模板列表（${validPage}/${totalPages}页）\n`
         return header + displayLines.join('\n')
       })
-    api.subcommand('.make [type:string] [arg1:string] [arg2:string]', '使用自定义API生成表情')
-      .usage('输入类型并补充对应参数来生成对应表情，使用关键词匹配')
-      .example('meme.make 吃 @用户 - 生成"吃"表情')
-      .example('meme.make - 随机使用模板生成表情')
-      .action(async ({ session }, type, arg1, arg2) => {
-        // 查找索引
-        const index = !type
-          ? Math.floor(Math.random() * this.apiConfigs.length)
-          : this.apiConfigs.findIndex(config =>
-              config.description.split('|')[0].trim() === type.trim()
-            );
-        if (index === -1) {
-          return autoRecall(session, `未找到表情"${type}"`);
-        }
 
-        const config = this.apiConfigs[index];
-        const parsedArg1 = parseTarget(arg1)
-        const parsedArg2 = parseTarget(arg2)
-        // 替换占位符
-        let apiUrl = config.apiEndpoint
-          .replace(/\${arg1}/g, parsedArg1)
-          .replace(/\${arg2}/g, parsedArg2)
-        // 请求图片
+    api.subcommand('.make [type:string] [arg1:string] [arg2:string]', '生成自定义表情')
+      .usage('使用自定义 API 生成表情\n将替换${arg1}和${arg2}参数\n支持@用户和QQ号')
+      .action(async ({ session }, type, arg1, arg2) => {
         try {
-          const response = await axios.get(apiUrl, {
-            timeout: 8000,
-            validateStatus: () => true,
-            responseType: 'text'
-          })
-          let imageUrl = apiUrl;
-          if (response.headers['content-type']?.includes('application/json')) {
-            const data = typeof response.data === 'string'
-              ? JSON.parse(response.data)
-              : response.data
-            if (data?.code === 200) imageUrl = data.data;
+          const apiConfigs = readJsonFile<ApiConfig[]>(this.configPath, this.logger) || [];
+          const index = !type
+            ? Math.floor(Math.random() * apiConfigs.length)
+            : apiConfigs.findIndex(config =>
+                config.description.split('|')[0].trim() === type.trim()
+              );
+          if (index === -1) return autoRecall(session, `未找到表情"${type}"`);
+          // 准备API URL
+          const apiUrl = apiConfigs[index].apiEndpoint
+            .replace(/\${arg1}/g, parseTarget(arg1 || ''))
+            .replace(/\${arg2}/g, parseTarget(arg2 || ''));
+          // 请求图片
+          const response = await fetch(apiUrl, { signal: AbortSignal.timeout(8000) })
+          // 处理响应
+          let imageUrl = apiUrl
+          if (response.headers.get('content-type')?.includes('application/json')) {
+            const data = await response.json()
+            if (data?.code === 200) imageUrl = data.data
           }
           return h('image', { url: imageUrl })
         } catch (err) {
-          return autoRecall(session, '生成出错：' + err.message);
-        }
-      })
-    api.subcommand('.reload', '重载自定义API配置', { authority: 3 })
-      .usage('重新加载本地API配置文件')
-      .action(async ({ session }) => {
-        try {
-          const content = fs.readFileSync(this.configPath, 'utf-8')
-          this.apiConfigs = JSON.parse(content)
-          return `已重载配置文件：${this.apiConfigs.length}项`
-        } catch (err) {
-          return autoRecall(session, '重载配置失败：' + err.message);
+          return autoRecall(session, '生成出错：' + err.message)
         }
       })
   }

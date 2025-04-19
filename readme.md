@@ -99,6 +99,7 @@
 ## 配置选项
 
 - `loadApi`: 是否开启自定义API生成功能（默认: false）
+- `loadInternal`: 是否开启内置图片生成功能（默认: false）
 - `genUrl`: MemeGenerator API地址（默认: "localhost:2233"）
 - `useMiddleware`: 是否开启中间件关键词匹配（默认: false）
 - `requirePrefix`: 是否开启关键词指令前缀（默认: true）
