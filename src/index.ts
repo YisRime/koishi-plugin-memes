@@ -32,6 +32,7 @@ export interface Config {
   genUrl: string
   useMiddleware: boolean
   requirePrefix: boolean
+  blacklist?: string
 }
 
 /**
@@ -47,7 +48,8 @@ export const Config: Schema<Config> = Schema.object({
   useMiddleware: Schema.boolean()
     .description('开启关键词匹配中间件').default(false),
   requirePrefix: Schema.boolean()
-    .description('开启关键词匹配指令前缀').default(true)
+    .description('开启关键词匹配指令前缀').default(true),
+  blacklist: Schema.string().description('禁止生成黑名单（英文逗号分隔）').role('textarea')
 })
 
 /**
@@ -60,12 +62,14 @@ export function apply(ctx: Context, config: Config) {
   const memeGenerator = new MemeGenerator(ctx, logger, apiUrl)
   const memeMaker = new MemeMaker(ctx)
   let keywordMap = new Map<string, string>()
+  const blacklistArr = (config.blacklist || '').split(',').map(s => s.trim()).filter(Boolean)
 
   const meme = ctx.command('memes [page:string]', '表情生成')
     .usage('可通过 MemeGenerator 生成表情\n也可自定义 API 生成表情')
     .example('memes - 查看所有表情模板')
     .example('memes 2 - 仅在文本模式下查看第2页模板列表')
     .action(async ({ session }, page) => {
+      if (typeof page === 'string' && page.trim().toLowerCase() === 'make') return '请使用 memes.make 来生成表情'
       try {
         let keys = memeGenerator['memeCache'].length > 0
           ? memeGenerator['memeCache'].map(t => t.id)
@@ -175,6 +179,7 @@ export function apply(ctx: Context, config: Config) {
     .example('memes.make 摸 @用户 - 使用"摸"生成表情')
     .action(async ({ session }, key, args) => {
       if (!key) return autoRecall(session, '请提供模板ID或关键词')
+      if (blacklistArr.includes(key)) return autoRecall(session, `已禁用生成该表情`)
       const elements = args ? [h('text', { content: args })] : []
       return memeGenerator.generateMeme(session, key, elements)
     })
@@ -338,6 +343,7 @@ export function apply(ctx: Context, config: Config) {
       try {
         const result = await memeGenerator.refreshCache()
         if (config.useMiddleware) keywordMap.clear()
+        logger.info(`已刷新缓存文件（${result.length}项）`)
         return `已刷新缓存文件（${result.length}项）`
       } catch (err) {
         return autoRecall(session, `刷新缓存失败：${err.message}`)
@@ -371,6 +377,8 @@ export function apply(ctx: Context, config: Config) {
       // 提取关键词
       const spaceIndex = content.indexOf(' ')
       const key = spaceIndex === -1 ? content : content.substring(0, spaceIndex)
+      // 黑名单检查
+      if (blacklistArr.includes(key)) return
       const templateId = keywordMap.get(key)
       if (!templateId) return
       // 准备参数

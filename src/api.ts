@@ -45,6 +45,7 @@ export class MemeAPI {
       .usage('使用自定义 API 生成表情\n查看自定义 API 表情模板列表')
       .example('meme all - 查看表情模板列表')
       .action(async ({ }, page) => {
+        if (typeof page === 'string' && page.trim().toLowerCase() === 'make') return '请使用 meme.make 来生成自定义表情'
         const apiConfigs = readJsonFile<ApiConfig[]>(this.configPath, this.logger) || [];
         const typeDescriptions = apiConfigs.map(config => config.description)
         const lines = []
