@@ -25,7 +25,8 @@ export class MemeMaker {
     },
     styles: {
       jiazi: { background: 'PCL-Jiazi.jpg', avatarSize: 400, avatarTop: 60, borderRadius: 8 },
-      tntboom: { background: 'HMCL-Boom.jpg', avatarSize: 320, avatarTop: 20, borderRadius: 8 }
+      tntboom: { background: 'HMCL-Boom.jpg', avatarSize: 320, avatarTop: 20, borderRadius: 8 },
+      zhuo: { background: 'PCLCE-Zhuo.jpg', avatarSize: 400, avatarTop: 60, borderRadius: 8 }
     }
   };
 
@@ -114,6 +115,7 @@ export class MemeMaker {
     const descriptions = {
       jiazi: '生成"你要被夹"图片',
       tntboom: '生成"你要被炸"图片',
+      zhuo: '生成"你要被捉"图片',
     };
     Object.keys(this.IMAGE_CONFIG.styles).forEach(style => {
       make.subcommand(`.${style} [target:text]`, descriptions[style])

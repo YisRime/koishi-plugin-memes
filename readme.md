@@ -2,7 +2,7 @@
 
 [![npm](https://img.shields.io/npm/v/koishi-plugin-memes?style=flat-square)](https://www.npmjs.com/package/koishi-plugin-memes)
 
-生成 Meme 表情包，支持 MemeGenerator API、内置模板和自定义 API 接口
+生成 Meme 表情包，支持 MemeGenerator API (v1)、内置模板和自定义 API 接口
 
 ## 功能介绍
 
@@ -30,6 +30,7 @@
 
 - `make.jiazi [target]` - 生成"你要被夹"图片
 - `make.tntboom [target]` - 生成"你要被炸"图片
+- `make.zhuo [target]` - 生成"你要被捉"图片
 
 ### 自定义API（需开启loadApi）
 
