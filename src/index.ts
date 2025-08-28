@@ -3,6 +3,7 @@ import {} from 'koishi-plugin-puppeteer'
 import { MemeAPI } from './api'
 import { MemeMaker } from './make'
 import { MemeGenerator } from './generator'
+import { MemeGeneratorRS, registerRsToolCommands } from './rs-generator'
 import { autoRecall, apiRequest, renderTemplateListAsImage, renderTemplateInfoAsImage } from './utils'
 
 export const name = 'memes'
@@ -30,6 +31,7 @@ export interface Config {
   loadApi: boolean
   loadInternal: boolean
   genUrl: string
+  useRsBackend: boolean
   useMiddleware: boolean
   requirePrefix: boolean
   blacklist?: string
@@ -45,6 +47,8 @@ export const Config: Schema<Config> = Schema.object({
     .description('开启内置图片生成').default(false),
   genUrl: Schema.string()
     .description('MemeGenerator API 配置').default('http://localhost:2233'),
+  useRsBackend: Schema.boolean()
+    .description('使用 MemeGenerator-RS').default(false),
   useMiddleware: Schema.boolean()
     .description('开启关键词匹配中间件').default(false),
   requirePrefix: Schema.boolean()
@@ -59,7 +63,9 @@ export const Config: Schema<Config> = Schema.object({
  */
 export function apply(ctx: Context, config: Config) {
   const apiUrl = config.genUrl?.trim().replace(/\/+$/, '') || ''
-  const memeGenerator = new MemeGenerator(ctx, logger, apiUrl)
+  const memeGenerator = config.useRsBackend
+    ? new MemeGeneratorRS(ctx, logger, apiUrl)
+    : new MemeGenerator(ctx, logger, apiUrl)
   const memeMaker = new MemeMaker(ctx)
   let keywordMap = new Map<string, string>()
   const blacklistArr = (config.blacklist || '').split(',').map(s => s.trim()).filter(Boolean)
@@ -73,30 +79,35 @@ export function apply(ctx: Context, config: Config) {
       try {
         let keys = memeGenerator['memeCache'].length > 0
           ? memeGenerator['memeCache'].map(t => t.id)
-          : await apiRequest<string[]>(`${apiUrl}/memes/keys`, {}, logger) || []
+          : config.useRsBackend
+            ? await apiRequest<string[]>(`${apiUrl}/meme/keys`, {}, logger) || []
+            : await apiRequest<string[]>(`${apiUrl}/memes/keys`, {}, logger) || []
         // 收集模板信息
         const allTemplates = await Promise.all(keys.map(async key => {
           const cachedTemplate = memeGenerator['memeCache'].find(t => t.id === key)
           if (cachedTemplate) {
             // 格式化模板信息
-            const { id, keywords = [], tags = [], params_type: pt = {} } = cachedTemplate;
+            const params = config.useRsBackend ? cachedTemplate['params'] : cachedTemplate.params_type;
+            const pt = params || {};
             const formatReq = (min, max, type = '') => {
               if (min === max && min) return `${type}${min}`
               if (min != null || max != null) return `${type}${min || 0}-${max || '∞'}`
               return ''
             }
             return {
-              id,
-              keywords: Array.isArray(keywords) ? keywords : [keywords].filter(Boolean),
+              id: cachedTemplate.id,
+              keywords: Array.isArray(cachedTemplate.keywords) ? cachedTemplate.keywords : [cachedTemplate.keywords].filter(Boolean),
               imgReq: formatReq(pt.min_images, pt.max_images, '图片'),
               textReq: formatReq(pt.min_texts, pt.max_texts, '文本'),
-              tags: Array.isArray(tags) ? tags : []
+              tags: Array.isArray(cachedTemplate.tags) ? cachedTemplate.tags : []
             }
           }
           try {
-            const info = await apiRequest(`${apiUrl}/memes/${key}/info`, {}, logger)
+            const infoUrl = config.useRsBackend ? `${apiUrl}/memes/${key}/info` : `${apiUrl}/memes/${key}/info`;
+            const info = await apiRequest(infoUrl, {}, logger);
             if (!info) return { id: key, keywords: [], imgReq: '', textReq: '', tags: [] }
-            const { keywords = [], tags = [], params_type: pt = {} } = info;
+            const params = config.useRsBackend ? info.params : info.params_type;
+            const pt = params || {};
             const formatReq = (min, max, type = '') => {
               if (min === max && min) return `${type}${min}`
               if (min != null || max != null) return `${type}${min || 0}-${max || '∞'}`
@@ -104,10 +115,10 @@ export function apply(ctx: Context, config: Config) {
             }
             return {
               id: key,
-              keywords: Array.isArray(keywords) ? keywords : [keywords].filter(Boolean),
+              keywords: Array.isArray(info.keywords) ? info.keywords : [info.keywords].filter(Boolean),
               imgReq: formatReq(pt?.min_images, pt?.max_images, '图片'),
               textReq: formatReq(pt?.min_texts, pt?.max_texts, '文本'),
-              tags: Array.isArray(tags) ? tags : []
+              tags: Array.isArray(info.tags) ? info.tags : []
             }
           } catch {
             return { id: key, keywords: [], imgReq: '', textReq: '', tags: [] }
@@ -180,7 +191,7 @@ export function apply(ctx: Context, config: Config) {
     .action(async ({ session }, key, args) => {
       if (!key) return autoRecall(session, '请提供模板ID或关键词')
       if (blacklistArr.includes(key)) return autoRecall(session, `已禁用生成该表情`)
-      const elements = args ? [h('text', { content: args })] : []
+      const elements = args ? h.parse(args) : []
       return memeGenerator.generateMeme(session, key, elements)
     })
   meme.subcommand('.info [key:string]', '获取模板信息')
@@ -194,14 +205,21 @@ export function apply(ctx: Context, config: Config) {
         if (!template) return autoRecall(session, `未找到表情模板"${key}"`)
         const templateId = template.id
         // 获取预览图
-        let previewImageBuffer = null
+        let previewImageBuffer: Buffer = null
         let previewImageBase64 = null
         try {
-          previewImageBuffer = await apiRequest(
-            `${apiUrl}/memes/${templateId}/preview`,
-            { responseType: 'arraybuffer', timeout: 8000 },
-            logger
-          )
+          if (config.useRsBackend) {
+            const result = await apiRequest<{ image_id: string }>(`${apiUrl}/memes/${templateId}/preview`, {}, logger);
+            if (result?.image_id) {
+                previewImageBuffer = await apiRequest<Buffer>(`${apiUrl}/image/${result.image_id}`, { responseType: 'arraybuffer', timeout: 8000 }, logger);
+            }
+          } else {
+            previewImageBuffer = await apiRequest<Buffer>(
+              `${apiUrl}/memes/${templateId}/preview`,
+              { responseType: 'arraybuffer', timeout: 8000 },
+              logger
+            )
+          }
           if (previewImageBuffer) {
             previewImageBase64 = `data:image/png;base64,${Buffer.from(previewImageBuffer).toString('base64')}`
           }
@@ -224,17 +242,30 @@ export function apply(ctx: Context, config: Config) {
         }
         const output = []
         const keywords = Array.isArray(template.keywords) ? template.keywords : [template.keywords].filter(Boolean)
+        const params = config.useRsBackend ? template['params'] : template.params_type;
+        const pt = params || {};
         // 基本信息
         output.push(`模板"${keywords.join(', ')}(${template.id})"详细信息:`)
         if (template.tags?.length) output.push(`标签: ${template.tags.join(', ')}`)
         // 参数需求
-        const pt = template.params_type || {}
         output.push('需要参数:')
         output.push(`- 图片: ${pt.min_images || 0}${pt.max_images !== pt.min_images ? `-${pt.max_images}` : ''}张`)
         output.push(`- 文本: ${pt.min_texts || 0}${pt.max_texts !== pt.min_texts ? `-${pt.max_texts}` : ''}条`)
         if (pt.default_texts?.length) output.push(`- 默认文本: ${pt.default_texts.join(', ')}`)
-        // 其他参数
-        if (pt.args_type?.args_model?.properties) {
+
+        // 其他参数 for rs-backend
+        if (config.useRsBackend && pt.options?.length) {
+            output.push('其他参数:');
+            pt.options.forEach(opt => {
+                let desc = `- ${opt.name} (${opt.type})`;
+                if (opt.default !== undefined) desc += ` 默认值: ${JSON.stringify(opt.default)}`;
+                if (opt.description) desc += ` - ${opt.description}`;
+                if (opt.choices?.length) desc += ` [可选值: ${opt.choices.join(', ')}]`;
+                output.push(desc);
+            });
+        }
+        // 其他参数 for original backend
+        else if (!config.useRsBackend && pt.args_type?.args_model?.properties) {
           output.push('其他参数:')
           const properties = pt.args_type.args_model.properties
           const definitions = pt.args_type.args_model.$defs || {}
@@ -276,36 +307,12 @@ export function apply(ctx: Context, config: Config) {
             }
           }
         }
-        // 命令行参数
-        if (pt.args_type?.parser_options?.length) {
-          output.push('命令行参数:')
-          pt.args_type.parser_options.forEach(opt => {
-            let desc = `- ${opt.names.join(', ')}`
-            if (opt.args?.length) {
-              const argsText = opt.args.map(arg => {
-                let argDesc = arg.name
-                if (arg.value) argDesc += `:${arg.value}`
-                if (arg.default !== null && arg.default !== undefined) argDesc += `=${arg.default}`
-                return argDesc
-              }).join(' ')
-              desc += ` ${argsText}`
-            }
-            if (opt.help_text) desc += ` - ${opt.help_text}`
-            output.push(desc)
-          })
-        }
-        // 参数示例
-        if (pt.args_type?.args_examples?.length) {
-          output.push('参数示例:')
-          pt.args_type.args_examples.forEach((example, i) => {
-            output.push(`- 示例${i+1}: ${JSON.stringify(example)}`)
-          })
-        }
+
         // 快捷指令
         if (template.shortcuts?.length) {
           output.push('快捷指令:')
           template.shortcuts.forEach(shortcut => {
-            output.push(`- ${shortcut.humanized || shortcut.key}${shortcut.args?.length ? ` (参数: ${shortcut.args.join(' ')})` : ''}`)
+            output.push(`- ${shortcut.humanized || shortcut.pattern || shortcut.key}${shortcut.args?.length ? ` (参数: ${shortcut.args.join(' ')})` : ''}`)
           })
         }
         // 创建和修改时间
@@ -402,5 +409,9 @@ export function apply(ctx: Context, config: Config) {
   // 注册外部API命令
   if (config.loadApi) {
     new MemeAPI(ctx, logger).registerCommands(meme)
+  }
+  // 注册 rs 独有命令
+  if (config.useRsBackend) {
+    registerRsToolCommands(meme, apiUrl, logger);
   }
 }
