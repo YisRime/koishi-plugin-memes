@@ -27,7 +27,7 @@ export interface MemeInfo {
  */
 export type ImageFetchInfo =
   { src: string } |
-  { userId: string }
+  { userId: string; name?: string }
 
 /**
  * 解析后的参数接口
@@ -224,7 +224,10 @@ export class MemeGenerator {
             })
           allText += text + ' '
         }
-        else if (e.type === 'at' && e.attrs.id) imageInfos.push({ userId: e.attrs.id })
+        else if (e.type === 'at' && e.attrs.id) {
+          const userName = e.attrs.name || (e.attrs.id === session.userId ? session.user?.name : undefined)
+          imageInfos.push({ userId: e.attrs.id, name: userName })
+        }
         else if (e.type === 'img' && e.attrs.src) imageInfos.push({ src: e.attrs.src })
         e.children?.length && e.children.forEach(processElement)
       }
@@ -277,7 +280,7 @@ export class MemeGenerator {
       let origTexts = [...texts]
       const needSelfAvatar = (min_images === 1 && !origImageInfos.length) ||
                             (origImageInfos.length && origImageInfos.length + 1 === min_images)
-      if (needSelfAvatar) origImageInfos = [{ userId: session.userId }, ...origImageInfos]
+      if (needSelfAvatar) origImageInfos = [{ userId: session.userId, name: session.user?.name }, ...origImageInfos]
       if (!origTexts.length && default_texts.length) origTexts = [...default_texts]
       // 验证参数数量
       const checkCount = (count, min, max, type) => {
@@ -297,7 +300,7 @@ export class MemeGenerator {
         try {
           // 获取URL和用户信息
           const url = 'src' in info ? info.src : await getUserAvatar(session, info.userId)
-          const userInfo = 'userId' in info ? { name: info.userId } : {}
+          const userInfo = 'userId' in info ? { name: info.name || info.userId } : {}
           // 获取图片内容
           const response = await fetch(url, { signal: AbortSignal.timeout(5000) })
           if (!response.ok) throw new Error(`HTTP状态码 ${response.status}`)
@@ -308,7 +311,7 @@ export class MemeGenerator {
         } catch {
           // 创建空白占位符
           images[index] = new Blob([], { type: 'image/png' })
-          userInfos[index] = 'userId' in info ? { name: info.userId } : {}
+          userInfos[index] = 'userId' in info ? { name: info.name || info.userId } : {}
         }
       }))
       // 渲染表情包
