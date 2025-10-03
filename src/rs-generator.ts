@@ -63,10 +63,7 @@ export class MemeGeneratorRS {
   async refreshCache(): Promise<MemeInfo[]> {
     try {
       const infos = await apiRequest<any[]>(`${this.apiUrl}/meme/infos`, {}, this.logger)
-      if (!infos?.length) {
-        this.logger.warn('获取模板列表失败或为空')
-        return []
-      }
+      if (!infos?.length) return []
       this.logger.info(`已获取模板信息: ${infos.length}个`)
       const templates: MemeInfo[] = infos.map(info => ({
         id: info.key,
@@ -142,6 +139,7 @@ export class MemeGeneratorRS {
       const templateInfo = await this.findTemplate(key)
       if (!templateInfo) return autoRecall(session, `获取模板信息失败: ${key}`)
       const tempId = templateInfo.id || key;
+      const { min_images = 0 } = templateInfo.params_type || {};
       // 1. 解析参数
       const imageSrcs: string[] = [];
       const texts: string[] = [];
@@ -154,6 +152,7 @@ export class MemeGeneratorRS {
         e.children?.length && e.children.forEach(processElement);
       };
       args.forEach(processElement);
+      if (min_images > 0 && imageSrcs.length === 0 && !session.quote?.elements?.some(el => el.type === 'img')) imageSrcs.push(`avatar:${session.userId}`);
       if (allText.trim()) {
         const tokens = allText.trim().match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) || [];
         tokens.forEach(token => {
@@ -176,7 +175,7 @@ export class MemeGeneratorRS {
       const imageBuffers = await Promise.all(imageSrcs.map(async src => {
         try {
           const url = src.startsWith('avatar:') ? await getUserAvatar(session, src.substring(7)) : src;
-          const response = await fetch(url, { signal: AbortSignal.timeout(8000) });
+          const response = await fetch(url, { signal: AbortSignal.timeout(10000) });
           if (!response.ok) return null;
           return Buffer.from(await response.arrayBuffer());
         } catch {
@@ -203,11 +202,10 @@ export class MemeGeneratorRS {
         { method: 'post', data: payload, timeout: 10000 },
         this.logger
       );
-      if (!genResult?.image_id) return autoRecall(session, '生成失败: 未收到 image_id');
 
       // 6. 获取最终图片
       const finalImage = await fetchImage(this.apiUrl, genResult.image_id, this.logger);
-      if (!finalImage) return autoRecall(session, '生成失败: 无法获取最终图片');
+      if (!finalImage) return autoRecall(session, '生成表情包失败：未获取到 API 数据');
 
       return h('image', { url: `data:image/png;base64,${finalImage.toString('base64')}` });
     } catch (e) {
@@ -239,33 +237,23 @@ export function registerRsToolCommands(meme: Command, apiUrl: string, logger: Lo
           const elements = h.parse(image || session.quote?.content || '');
           const imgElement = elements.find(el => el.type === 'img');
           if (!imgElement) return autoRecall(session, '请提供一张图片');
-
-          const response = await fetch(imgElement.attrs.src, { signal: AbortSignal.timeout(8000) });
-          if (!response.ok) throw new Error('图片获取失败');
+          const response = await fetch(imgElement.attrs.src, { signal: AbortSignal.timeout(10000) });
           const buffer = Buffer.from(await response.arrayBuffer());
-
           const image_id = await uploadImage(apiUrl, buffer, logger);
-          if (!image_id) throw new Error('图片上传失败');
-
           const payload: any = { image_id };
           op.args.forEach((arg, i) => {
             const [name] = arg.split(':');
             payload[name] = cmdArgs[i];
           });
-
           const result = await apiRequest<{ image_id: string }>(
             `${apiUrl}/tools/image_operations/${op.endpoint}`,
             { method: 'post', data: payload },
             logger
           );
-          if (!result?.image_id) throw new Error('图片处理失败');
-
           const finalImage = await fetchImage(apiUrl, result.image_id, logger);
-          if (!finalImage) throw new Error('无法获取处理后的图片');
-
           return h.image(finalImage, 'image/png');
         } catch (err) {
-          return autoRecall(session, `处理出错: ${err.message}`);
+          return autoRecall(session, err.message);
         }
       });
   }

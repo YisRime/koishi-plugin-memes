@@ -225,7 +225,7 @@ export class MemeGenerator {
           allText += text + ' '
         }
         else if (e.type === 'at' && e.attrs.id) {
-          const userName = e.attrs.name || (e.attrs.id === session.userId ? session.user?.name : undefined)
+          const userName = e.attrs.name || (e.attrs.id === session.userId ? session.username : undefined)
           imageInfos.push({ userId: e.attrs.id, name: userName })
         }
         else if (e.type === 'img' && e.attrs.src) imageInfos.push({ src: e.attrs.src })
@@ -280,7 +280,7 @@ export class MemeGenerator {
       let origTexts = [...texts]
       const needSelfAvatar = (min_images === 1 && !origImageInfos.length) ||
                             (origImageInfos.length && origImageInfos.length + 1 === min_images)
-      if (needSelfAvatar) origImageInfos = [{ userId: session.userId, name: session.user?.name }, ...origImageInfos]
+      if (needSelfAvatar) origImageInfos = [{ userId: session.userId, name: session.username }, ...origImageInfos]
       if (!origTexts.length && default_texts.length) origTexts = [...default_texts]
       // 验证参数数量
       const checkCount = (count, min, max, type) => {
