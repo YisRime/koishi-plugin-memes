@@ -197,8 +197,7 @@ export class MemeGeneratorRS {
       );
       const finalImage = await fetchImage(this.apiUrl, genResult.image_id, this.logger);
       if (!finalImage) return autoRecall(session, '生成表情包失败：未获取到 API 数据');
-
-      return h.image(`data:image/png;base64,${finalImage.toString('base64')}`);
+      return h.image(finalImage, 'image/png');
     } catch (e) {
       return autoRecall(session, e.message);
     }

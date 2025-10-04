@@ -138,7 +138,7 @@ export function apply(ctx: Context, config: Config) {
               return keyA.localeCompare(keyB, 'zh-CN');
             });
             return renderTemplateListAsImage(ctx, pageTitle, allTemplates).then(buffer =>
-              h.image(`data:image/png;base64,${buffer.toString('base64')}`)
+              h.image(buffer, 'image/png')
             );
           } catch (err) {
             logger.error('渲染模板列表图片失败：', err);
@@ -233,7 +233,7 @@ export function apply(ctx: Context, config: Config) {
         if (ctx.puppeteer) {
           try {
             const infoImage = await renderTemplateInfoAsImage(ctx, template, previewImageBase64)
-            return h.image(`data:image/png;base64,${infoImage.toString('base64')}`)
+            return h.image(infoImage, 'image/png')
           } catch (err) {
             logger.error('渲染模板信息图片失败：', err)
           }
