@@ -330,7 +330,7 @@ export class MemeGenerator {
         this.logger
       )
       if (!imageBuffer) return autoRecall(session, '生成表情包失败：未获取到 API 数据')
-      return h('image', { url: `data:image/png;base64,${Buffer.from(imageBuffer).toString('base64')}` })
+      return h.image(`data:image/png;base64,${Buffer.from(imageBuffer).toString('base64')}`)
     } catch (e) {
       return autoRecall(session, e.message)
     }

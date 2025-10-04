@@ -70,10 +70,13 @@ export function apply(ctx: Context, config: Config) {
   let keywordMap = new Map<string, string>()
   const blacklistArr = (config.blacklist || '').split(',').map(s => s.trim()).filter(Boolean)
 
-  const meme = ctx.command('memes [page:string]', '表情生成')
-    .usage('可通过 MemeGenerator 生成表情\n也可自定义 API 生成表情')
-    .example('memes - 查看所有表情模板')
-    .example('memes 2 - 仅在文本模式下查看第2页模板列表')
+  const meme = ctx.command('memes', '表情生成')
+    .usage('通过 MemeGenerator/API 生成表情')
+
+  meme.subcommand('.list [page:string]', '查看模板列表')
+    .usage('查看表情模板列表，可分页显示')
+    .example('memes.list - 查看所有表情模板')
+    .example('memes.list 2 - 仅在文本模式下查看第2页模板列表')
     .action(async ({ session }, page) => {
       if (typeof page === 'string' && page.trim().toLowerCase() === 'make') return '请使用 memes.make 来生成表情'
       try {
@@ -135,7 +138,7 @@ export function apply(ctx: Context, config: Config) {
               return keyA.localeCompare(keyB, 'zh-CN');
             });
             return renderTemplateListAsImage(ctx, pageTitle, allTemplates).then(buffer =>
-              h('image', { url: `data:image/png;base64,${buffer.toString('base64')}` })
+              h.image(`data:image/png;base64,${buffer.toString('base64')}`)
             );
           } catch (err) {
             logger.error('渲染模板列表图片失败：', err);
@@ -184,14 +187,14 @@ export function apply(ctx: Context, config: Config) {
         return autoRecall(session, `获取模板列表失败: ${err.message}`)
       }
     })
-  meme.subcommand('.make <key:string> [args:text]', 'Meme 表情生成')
+  meme.subcommand('.make <key:string> [args:elements]', 'Meme 表情生成')
     .usage('使用关键词或模板ID生成表情\n可添加文本、用户头像、图片等内容\n可用"-参数=值"来设置参数')
     .example('memes.make ba_say 你好 -character=1 - 使用"ba_say"生成角色"心奈"的表情')
     .example('memes.make 摸 @用户 - 使用"摸"生成表情')
     .action(async ({ session }, key, args) => {
       if (!key) return autoRecall(session, '请提供模板ID或关键词')
       if (blacklistArr.includes(key)) return autoRecall(session, `已禁用生成该表情`)
-      const elements = args ? h.parse(args) : []
+      const elements = args || []
       return memeGenerator.generateMeme(session, key, elements)
     })
   meme.subcommand('.info [key:string]', '获取模板信息')
@@ -230,16 +233,14 @@ export function apply(ctx: Context, config: Config) {
         if (ctx.puppeteer) {
           try {
             const infoImage = await renderTemplateInfoAsImage(ctx, template, previewImageBase64)
-            return h('image', { url: `data:image/png;base64,${infoImage.toString('base64')}` })
+            return h.image(`data:image/png;base64,${infoImage.toString('base64')}`)
           } catch (err) {
             logger.error('渲染模板信息图片失败：', err)
           }
         }
         // 文本模式（作为备用选项）
         const response = []
-        if (previewImageBuffer) {
-          response.push(h('image', { url: previewImageBase64 }))
-        }
+        if (previewImageBuffer) response.push(h.image(previewImageBase64))
         const output = []
         const keywords = Array.isArray(template.keywords) ? template.keywords : [template.keywords].filter(Boolean)
         const params = config.useRsBackend ? template['params'] : template.params_type;

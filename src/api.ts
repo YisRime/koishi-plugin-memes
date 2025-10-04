@@ -108,7 +108,7 @@ export class MemeAPI {
             const data = await response.json()
             if (data?.code === 200) imageUrl = data.data
           }
-          return h('image', { url: imageUrl })
+          return h.image(imageUrl)
         } catch (err) {
           return autoRecall(session, '生成出错：' + err.message)
         }
