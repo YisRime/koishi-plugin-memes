@@ -202,14 +202,6 @@ export class MemeGenerator {
       const texts: string[] = []
       const options: Record<string, any> = {}
       let allText = ''
-      // 处理引用消息中的图片
-      if (session.quote?.elements) {
-        const processElement = (e) => {
-          if (e.type === 'img' && e.attrs.src) imageInfos.push({ src: e.attrs.src })
-          if (e.children?.length) e.children.forEach(processElement)
-        }
-        session.quote.elements.forEach(processElement)
-      }
       // 处理文本内容和元素
       const processElement = (e: h): void => {
         if (e.type === 'text' && e.attrs.content) {

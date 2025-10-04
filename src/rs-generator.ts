@@ -140,7 +140,6 @@ export class MemeGeneratorRS {
       if (!templateInfo) return autoRecall(session, `获取模板信息失败: ${key}`)
       const tempId = templateInfo.id || key;
       const { min_images = 0 } = templateInfo.params_type || {};
-      // 1. 解析参数
       const imageSrcs: string[] = [];
       const texts: string[] = [];
       const options: Record<string, any> = {};
@@ -152,7 +151,6 @@ export class MemeGeneratorRS {
         e.children?.length && e.children.forEach(processElement);
       };
       args.forEach(processElement);
-      if (min_images > 0 && imageSrcs.length === 0 && !session.quote?.elements?.some(el => el.type === 'img')) imageSrcs.push(`avatar:${session.userId}`);
       if (allText.trim()) {
         const tokens = allText.trim().match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) || [];
         tokens.forEach(token => {
@@ -170,8 +168,9 @@ export class MemeGeneratorRS {
           }
         });
       }
-
-      // 2. 获取图片 Buffer
+      const needSelfAvatar = (min_images === 1 && imageSrcs.length === 0) ||
+                             (imageSrcs.length > 0 && imageSrcs.length + 1 === min_images);
+      if (needSelfAvatar) imageSrcs.unshift(`avatar:${session.userId}`);
       const imageBuffers = await Promise.all(imageSrcs.map(async src => {
         try {
           const url = src.startsWith('avatar:') ? await getUserAvatar(session, src.substring(7)) : src;
@@ -182,28 +181,20 @@ export class MemeGeneratorRS {
           return null;
         }
       }));
-
-      // 3. 上传图片获取 IDs
       const imageIds = (await Promise.all(imageBuffers
         .filter(Boolean)
         .map(buf => uploadImage(this.apiUrl, buf, this.logger))
       )).filter(Boolean);
-
-      // 4. 构建请求体
       const payload = {
         images: imageIds.map(id => ({ name: 'image', id })),
         texts,
         options
       };
-
-      // 5. 请求生成表情
       const genResult = await apiRequest<{ image_id: string }>(
         `${this.apiUrl}/memes/${tempId}`,
         { method: 'post', data: payload, timeout: 10000 },
         this.logger
       );
-
-      // 6. 获取最终图片
       const finalImage = await fetchImage(this.apiUrl, genResult.image_id, this.logger);
       if (!finalImage) return autoRecall(session, '生成表情包失败：未获取到 API 数据');
 
@@ -231,10 +222,10 @@ export function registerRsToolCommands(meme: Command, apiUrl: string, logger: Lo
 
   for (const cmd in imageOperations) {
     const op = imageOperations[cmd];
-    meme.subcommand(`.${cmd} [image:text] ${op.args.join(' ')}`, op.desc)
+    meme.subcommand(`.${cmd} [image:elements] ${op.args.join(' ')}`, op.desc)
       .action(async ({ session }, image, ...cmdArgs) => {
         try {
-          const elements = h.parse(image || session.quote?.content || '');
+          const elements = image || [];
           const imgElement = elements.find(el => el.type === 'img');
           if (!imgElement) return autoRecall(session, '请提供一张图片');
           const response = await fetch(imgElement.attrs.src, { signal: AbortSignal.timeout(10000) });
