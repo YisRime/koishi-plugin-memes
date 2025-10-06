@@ -358,6 +358,32 @@ export function apply(ctx: Context, config: Config) {
       }
     })
 
+  meme.subcommand('.random', '随机生成表情')
+    .usage('随机选择模板生成表情')
+    .example('memes.random')
+    .action(async ({ session }) => {
+      try {
+        const allTemplates = memeGenerator['memeCache'];
+        if (!allTemplates || allTemplates.length === 0) {
+          return autoRecall(session, '模板列表为空');
+        }
+        const suitableTemplates = allTemplates.filter(template => {
+          const params = config.useRsBackend ? template['params'] : template.params_type;
+          const pt = params || {};
+          const minImages = pt.min_images || 0;
+          const minTexts = pt.min_texts || 0;
+          const hasDefaultTexts = pt.default_texts?.length > 0;
+          return minImages <= 1 && (minTexts === 0 || (minTexts === 1 && hasDefaultTexts));
+        });
+        if (suitableTemplates.length === 0) return autoRecall(session, '未找到符合条件的模板');
+        const templateToUse = suitableTemplates[Math.floor(Math.random() * suitableTemplates.length)];
+        const key = templateToUse.id;
+        return await memeGenerator.generateMeme(session, key, []);
+      } catch (err) {
+        return autoRecall(session, `随机生成失败: ${err.message}`);
+      }
+    });
+
   /**
    * 关键词中间件
    * 实现直接通过关键词触发表情生成
