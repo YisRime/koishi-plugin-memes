@@ -1,7 +1,5 @@
 import { Context, Schema, h, Logger } from 'koishi'
 import {} from 'koishi-plugin-puppeteer'
-import { MemeAPI } from './api'
-import { MemeMaker } from './make'
 import { MemeGenerator } from './generator'
 import { MemeGeneratorRS, registerRsToolCommands } from './rs-generator'
 import { autoRecall, apiRequest, renderTemplateListAsImage, renderTemplateInfoAsImage } from './utils'
@@ -28,8 +26,6 @@ export const usage = `
  * 插件配置接口定义
  */
 export interface Config {
-  loadApi: boolean
-  loadInternal: boolean
   genUrl: string
   useRsBackend: boolean
   useMiddleware: boolean
@@ -41,10 +37,6 @@ export interface Config {
  * 插件配置Schema定义
  */
 export const Config: Schema<Config> = Schema.object({
-  loadApi: Schema.boolean()
-    .description('开启自定义 API 生成').default(false),
-  loadInternal: Schema.boolean()
-    .description('开启内置图片生成').default(false),
   genUrl: Schema.string()
     .description('MemeGenerator API 配置').default('http://localhost:2233'),
   useRsBackend: Schema.boolean()
@@ -66,7 +58,6 @@ export function apply(ctx: Context, config: Config) {
   const memeGenerator = config.useRsBackend
     ? new MemeGeneratorRS(ctx, logger, apiUrl)
     : new MemeGenerator(ctx, logger, apiUrl)
-  const memeMaker = new MemeMaker(ctx)
   let keywordMap = new Map<string, string>()
   const blacklistArr = (config.blacklist || '').split(',').map(s => s.trim()).filter(Boolean)
 
@@ -429,14 +420,6 @@ export function apply(ctx: Context, config: Config) {
     })
   }
 
-  // 注册内置模板命令
-  if (config.loadInternal) {
-    memeMaker.registerCommands(meme)
-  }
-  // 注册外部API命令
-  if (config.loadApi) {
-    new MemeAPI(ctx, logger).registerCommands(meme)
-  }
   // 注册 rs 独有命令
   if (config.useRsBackend) {
     registerRsToolCommands(meme, apiUrl, logger);

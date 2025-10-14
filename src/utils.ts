@@ -88,19 +88,6 @@ export function writeJsonFile(filePath: string, data: any, logger?: Logger): boo
 }
 
 /**
- * 加载配置文件，如果不存在则创建默认配置
- * @param filePath - 配置文件的路径
- * @param defaultConfig - 默认配置对象
- * @param logger - 可选，用于记录操作日志的Logger实例
- * @returns 加载的配置对象或默认配置对象
- * @template T - 配置数据的类型
- */
-export function loadOrCreateConfig<T>(filePath: string, defaultConfig: T, logger?: Logger): T {
-  const data = readJsonFile<T>(filePath, logger)
-  return data !== null ? data : (writeJsonFile(filePath, defaultConfig, logger) ? defaultConfig : defaultConfig)
-}
-
-/**
  * 发送API请求并处理响应
  * @param url - 请求的URL地址
  * @param options - 请求选项配置对象
