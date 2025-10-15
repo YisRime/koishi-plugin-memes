@@ -54,9 +54,9 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
 
   const result = await provider.start()
   if (!result.success) return
-  ctx.logger.info(`MemeGenerator 配置成功: v${result.version}（模板数: ${result.count}）`)
+  ctx.logger.info(`MemeGenerator 已加载: v${result.version}（模板数: ${result.count}）`)
 
-  const cmd = ctx.command('meme', '表情生成').usage('通过 MemeGenerator API 生成表情')
+  const cmd = ctx.command('memes', '表情生成').usage('通过 MemeGenerator API 生成表情')
 
   cmd.subcommand('.list [page:string]', '模板列表')
     .action(async ({}, pageStr) => {
