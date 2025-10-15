@@ -2,7 +2,7 @@
 
 [![npm](https://img.shields.io/npm/v/koishi-plugin-memes?style=flat-square)](https://www.npmjs.com/package/koishi-plugin-memes)
 
-生成 Meme 表情包，支持 [meme-generator](https://github.com/MemeCrafters/meme-generator) (Python) 和 [meme-generator-rs](https://github.com/MemeCrafters/meme-generator-rs) (Rust)。
+生成 Meme 表情包，支持 [meme-generator](https://github.com/MemeCrafters/meme-generator) 和 [meme-generator-rs](https://github.com/MemeCrafters/meme-generator-rs) 两种后端。
 
 ## ✨ 功能特性
 
