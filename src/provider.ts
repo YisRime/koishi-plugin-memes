@@ -2,11 +2,7 @@ import { Context, h, Session, Command, Logger } from 'koishi'
 
 /**
  * @interface ParserFlags
- * @description 命令行解析标志。
- * @property {boolean} [short] - 是否有短标志。
- * @property {boolean} [long] - 是否有长标志。
- * @property {string[]} [short_aliases] - 短标志别名。
- * @property {string[]} [long_aliases] - 长标志别名。
+ * @description 命令行解析标志，用于定义如何解析额外参数。
  */
 export interface ParserFlags {
   short?: boolean
@@ -17,15 +13,7 @@ export interface ParserFlags {
 
 /**
  * @interface MemeOption
- * @description meme 模板参数定义。
- * @property {string} name - 参数名称。
- * @property {string} type - 参数类型。
- * @property {any} [default] - 默认值。
- * @property {string | null} [description] - 参数描述。
- * @property {ParserFlags} [parser_flags] - 命令行解析标志。
- * @property {(string | number)[] | null} [choices] - 可选值列表。
- * @property {number | null} [minimum] - 最小值。
- * @property {number | null} [maximum] - 最大值。
+ * @description 定义一个 meme 模板所需的额外参数（除图片和文本外）。
  */
 export interface MemeOption {
   name: string
@@ -40,12 +28,7 @@ export interface MemeOption {
 
 /**
  * @interface MemeShortcut
- * @description meme 模板快捷方式定义。
- * @property {string} pattern - 匹配模式。
- * @property {string | null} [humanized] - 人性化描述。
- * @property {string[]} names - 名称列表。
- * @property {string[]} texts - 文本内容。
- * @property {Record<string, any>} options - 选项。
+ * @description 定义 meme 模板的快捷指令。
  */
 export interface MemeShortcut {
   pattern: string
@@ -57,19 +40,7 @@ export interface MemeShortcut {
 
 /**
  * @interface MemeInfo
- * @description meme 模板信息接口。
- * @property {string} key - 模板的唯一标识。
- * @property {string[]} keywords - 触发关键词。
- * @property {number} minImages - 所需的最小图片数。
- * @property {number} maxImages - 所需的最大图片数。
- * @property {number} minTexts - 所需的最小文本数。
- * @property {number} maxTexts - 所需的最大文本数。
- * @property {string[]} defaultTexts - 默认文本。
- * @property {MemeOption[]} args - 额外参数定义。
- * @property {string[]} [tags] - 模板标签。
- * @property {MemeShortcut[]} [shortcuts] - 快捷指令。
- * @property {string} [date_created] - 创建日期。
- * @property {string} [date_modified] - 修改日期。
+ * @description 插件内部统一的 meme 模板信息结构。
  */
 export interface MemeInfo {
   key: string
@@ -87,10 +58,11 @@ export interface MemeInfo {
 }
 
 /**
- * 获取用户头像 URL。
+ * @function getAvatar
+ * @description 获取用户的头像 URL。
  * @param {Session} session - 当前会话对象。
- * @param {string} [userId] - 目标用户的 ID (可选, 默认为当前会话用户)。
- * @returns {Promise<string>} 一个解析为头像 URL 的 Promise。
+ * @param {string} [userId] - 目标用户的 ID。如果未提供，则默认为当前会话的用户。
+ * @returns {Promise<string>} 解析为头像 URL 的 Promise。如果 API 调用失败，则回退到 QQ 的通用头像链接。
  */
 export async function getAvatar(session: Session, userId?: string): Promise<string> {
   const targetId = userId || session.userId
@@ -102,10 +74,11 @@ export async function getAvatar(session: Session, userId?: string): Promise<stri
 }
 
 /**
- * 解析 Koishi 的元素数组，提取图片、文本和命令行参数。
- * @param {h[]} input - 要解析的 h() 元素数组。
- * @param {Session} session - 当前会话对象。
- * @returns {Promise<{ imgs: string[], texts: string[], args: Record<string, any> }>} 一个包含图片URL、文本和参数对象的 Promise。
+ * @function parseInput
+ * @description 解析 Koishi 的元素（h-element）数组，从中提取图片、文本和命令行风格的参数。
+ * @param {h[]} input - 从命令中获取的 h() 元素数组。
+ * @param {Session} session - 当前会话对象，用于获取被 at 用户的头像。
+ * @returns {Promise<{ imgs: string[], texts: string[], args: Record<string, any> }>} 包含图片URL、文本和参数对象的 Promise。
  */
 export async function parseInput(input: h[], session: Session): Promise<{ imgs: string[], texts: string[], args: Record<string, any> }> {
   const imgs: string[] = []
@@ -133,80 +106,76 @@ export async function parseInput(input: h[], session: Session): Promise<{ imgs: 
   return { imgs, texts, args }
 }
 
-
 /**
  * @class MemeProvider
- * @description 封装了所有与 meme 生成 API 的交互逻辑。
+ * @description 封装了所有与 MemeGenerator (后端) 的 API 交互逻辑。
  */
 export class MemeProvider {
-  /** @property {boolean} isRsApi - 标记检测到的后端是否为 rs。 */
+  /**
+   * @property {boolean} isRsApi
+   * @description 标记检测到的后端是否为 rs-api。不同的后端 API 结构不同。
+   */
   public isRsApi: boolean = false
-  /** @property {MemeInfo[]} cache - 内部 meme 模板缓存。 */
   private cache: MemeInfo[] = []
-  /** @property {Logger} log - 日志记录器实例。 */
   private log: Logger
 
   /**
-   * MemeProvider 的构造函数。
+   * @constructor
+   * @description MemeProvider 的构造函数。
    * @param {Context} ctx - Koishi 的上下文对象。
    * @param {string} url - 后端 API 的地址。
    */
-  constructor(private ctx: Context, private url: string) {}
+  constructor(private ctx: Context, private url: string) {
+    this.log = ctx.logger('memes')
+  }
 
   /**
-   * 初始化服务，检测后端版本并填充缓存。
-   * @returns {Promise<string | null>} 成功时返回 null，失败时返回错误信息字符串。
+   * @method start
+   * @description 初始化服务，检测后端版本并填充缓存。
+   * @returns {Promise<{ isRsApi: boolean, count: number, version: string }>} 成功时返回包含后端信息和模板数量的对象。
+   * @throws {Error} 当 API 连接或初始化失败时抛出错误。
    */
-  async start(): Promise<string | null> {
+  async start(): Promise<{ isRsApi: boolean, count: number, version: string }> {
     const versionUrl = `${this.url}/meme/version`
     try {
-      this.log.info('请求地址: %s', versionUrl)
-      const version = await this.ctx.http.get<string>(versionUrl, { responseType: 'text' })
-      this.log.info('收到响应: %s', version)
-
-      const cleanVer = version.replace(/"/g, '')
-      this.isRsApi = !cleanVer.startsWith('0.1.')
-
-      const fetchError = await this.fetch()
-      if (fetchError) return fetchError // 如果 fetch 失败，则传递错误信息
-
-      return null // 初始化成功
+      const versionRaw = await this.ctx.http.get<string>(versionUrl, { responseType: 'text' })
+      const version = versionRaw.replace(/"/g, '')
+      this.isRsApi = !version.startsWith('0.1.')
+      const count = await this.fetch()
+      return { isRsApi: this.isRsApi, count, version }
     } catch (error) {
-      this.log.error('API 连接或版本检查失败。', error)
-      return `API 连接失败: ${error.message}。`
+      throw new Error(`API 连接或初始化失败: ${error.message}`)
     }
   }
 
   /**
-   * 从 API 重新获取所有 meme 模板并刷新内部缓存。
-   * @returns {Promise<string | null>} 成功时返回 null，失败时返回错误信息字符串。
+   * @method fetch
+   * @description 从 API 重新获取所有 meme 模板并刷新内部缓存。
+   * @returns {Promise<number>} 返回加载到的模板数量。
    */
-  async fetch(): Promise<string | null> {
-    this.log.info('正在获取 meme 模板...')
+  async fetch(): Promise<number> {
     try {
-      this.cache = this.isRsApi
-        ? await this.fetchRs()
-        : await this.fetchFast()
-      this.log.info(`缓存更新成功，共加载了 ${this.cache.length} 个模板。`)
-      return null
+      this.cache = this.isRsApi ? await this.fetchRs() : await this.fetchFast()
+      return this.cache.length
     } catch (e) {
-      this.log.error('刷新缓存失败。', e)
-      return `刷新模板缓存失败: ${e.message}`
+      throw new Error(`刷新模板缓存失败: ${e.message}`)
     }
   }
 
   /**
-   * 获取缓存的 meme 模板列表。
-   * @returns {Promise<MemeInfo[]>} 解析为 MemeInfo 对象数组的 Promise。
+   * @method getList
+   * @description 获取缓存的 meme 模板列表。
+   * @returns {Promise<MemeInfo[]>} 模板信息数组。
    */
   getList(): Promise<MemeInfo[]> {
     return Promise.resolve(this.cache)
   }
 
   /**
-   * 根据 key 查找单个 meme 模板。
+   * @method getInfo
+   * @description 根据 key 查找单个 meme 模板。
    * @param {string} key - 模板的 key 或关键词。
-   * @param {boolean} [fuzzy=true] - 是否进行模糊搜索。若为 false, 则进行精确匹配。
+   * @param {boolean} [fuzzy=true] - 是否进行模糊搜索。若为 false，则进行精确匹配。
    * @returns {Promise<MemeInfo | null>} 解析为 MemeInfo 或 null 的 Promise。
    */
   async getInfo(key: string, fuzzy = true): Promise<MemeInfo | null> {
@@ -218,7 +187,8 @@ export class MemeProvider {
   }
 
   /**
-   * 根据关键词搜索 meme 模板。
+   * @method find
+   * @description 根据关键词搜索 meme 模板，并按匹配优先级排序。
    * @param {string} query - 要搜索的关键词。
    * @returns {Promise<MemeInfo[]>} 解析为排序后的 MemeInfo 结果数组的 Promise。
    */
@@ -238,34 +208,31 @@ export class MemeProvider {
   }
 
   /**
-   * 获取 meme 模板的预览图。
+   * @method getPreview
+   * @description 获取 meme 模板的预览图。
    * @param {string} key - 模板的 key。
    * @returns {Promise<Buffer | string>} 解析为图片 Buffer 或错误信息字符串的 Promise。
    */
   async getPreview(key: string): Promise<Buffer | string> {
-    let previewUrl: string;
     try {
+      let previewUrl: string
       if (this.isRsApi) {
-        const previewInfoUrl = `${this.url}/memes/${key}/preview`;
-        this.log.info('请求地址: %s', previewInfoUrl);
-        const { image_id } = await this.ctx.http.get<{ image_id: string }>(previewInfoUrl);
-        this.log.info('收到响应: %o', { image_id });
-        previewUrl = `${this.url}/image/${image_id}`;
+        const { image_id } = await this.ctx.http.get<{ image_id: string }>(`${this.url}/memes/${key}/preview`);
+        previewUrl = `${this.url}/image/${image_id}`
       } else {
-        previewUrl = `${this.url}/memes/${key}/preview`;
+        previewUrl = `${this.url}/memes/${key}/preview`
       }
-      this.log.info('请求地址: %s', previewUrl);
-      const resp = await this.ctx.http.get<ArrayBuffer>(previewUrl, { responseType: 'arraybuffer' });
-      this.log.info(`收到响应: Buffer(length=${resp.byteLength})`);
-      return Buffer.from(resp);
+      const resp = await this.ctx.http.get<ArrayBuffer>(previewUrl, { responseType: 'arraybuffer' })
+      return Buffer.from(resp)
     } catch (e) {
-      this.log.error('获取预览图失败: %s', e.message);
-      return '获取预览图失败。';
+      this.log.warn('获取预览图失败: %s', e.message)
+      return '获取预览图失败。'
     }
   }
 
   /**
-   * 根据给定参数生成 meme。
+   * @method create
+   * @description 根据给定参数生成 meme。
    * @param {string} key - 要使用的模板 key。
    * @param {h[]} input - 包含图片、文本和参数的 Koishi 元素数组。
    * @param {Session} session - 当前会话对象。
@@ -273,7 +240,7 @@ export class MemeProvider {
    */
   async create(key: string, input: h[], session: Session): Promise<h | string> {
     const item = await this.getInfo(key, false)
-    if (!item) return `模板 “${key}” 不存在。`
+    if (!item) return `模板不存在: ${key}`
 
     let { imgs, texts, args } = await parseInput(input, session)
 
@@ -282,10 +249,10 @@ export class MemeProvider {
     }
 
     if (imgs.length < item.minImages || imgs.length > item.maxImages) {
-      return `需要 ${item.minImages}-${item.maxImages} 张图片，但提供了 ${imgs.length} 张。`
+      return `图片数量不符, 需要 ${item.minImages}-${item.maxImages} 张, 提供了 ${imgs.length} 张。`
     }
     if (texts.length < item.minTexts || texts.length > item.maxTexts) {
-      return `需要 ${item.minTexts}-${item.maxTexts} 段文本，但提供了 ${texts.length} 段。`
+      return `文本数量不符, 需要 ${item.minTexts}-${item.maxTexts} 条, 提供了 ${texts.length} 段。`
     }
 
     try {
@@ -293,135 +260,69 @@ export class MemeProvider {
         ? await this.createRs(key, imgs, texts, args)
         : await this.createFast(key, imgs, texts, args)
     } catch (e) {
-      this.log.error('Meme 生成失败: ', e)
+      this.log.warn('Meme 生成失败', e)
       return `制作失败: ${e.message}`
     }
   }
 
-  /**
-   * @private 从 rs-api 后端获取模板列表。
-   * @returns {Promise<MemeInfo[]>}
-   */
   private async fetchRs(): Promise<MemeInfo[]> {
-    const url = `${this.url}/meme/infos`;
-    this.log.info('请求地址: %s', url);
-    const data = await this.ctx.http.get<any[]>(url);
-    this.log.info(`收到响应: 获取到 ${data.length} 条模板数据。`);
+    const data = await this.ctx.http.get<any[]>(`${this.url}/meme/infos`);
     return data.map(info => this.normRs(info)).filter(Boolean) as MemeInfo[];
   }
 
-  /**
-   * @private 将 rs-api 的原始数据规范化为 MemeInfo 格式。
-   * @param {any} data - 原始数据。
-   * @returns {MemeInfo | null}
-   */
   private normRs(data: any): MemeInfo | null {
     if (!data || !data.params) return null
     return {
-      key: data.key,
-      keywords: data.keywords || [],
-      minImages: data.params.min_images,
-      maxImages: data.params.max_images,
-      minTexts: data.params.min_texts,
-      maxTexts: data.params.max_texts,
-      defaultTexts: data.params.default_texts || [],
-      args: (data.params.options || []).map(opt => ({
-        name: opt.name, type: opt.type, default: opt.default, description: opt.description,
-        parser_flags: opt.parser_flags, choices: opt.choices, minimum: opt.minimum, maximum: opt.maximum,
-      })),
-      tags: data.tags || [],
-      shortcuts: data.shortcuts || [],
-      date_created: data.date_created,
-      date_modified: data.date_modified,
+      key: data.key, keywords: data.keywords || [], minImages: data.params.min_images, maxImages: data.params.max_images,
+      minTexts: data.params.min_texts, maxTexts: data.params.max_texts, defaultTexts: data.params.default_texts || [],
+      args: (data.params.options || []).map(opt => ({ ...opt })),
+      tags: data.tags || [], shortcuts: data.shortcuts || [], date_created: data.date_created, date_modified: data.date_modified,
     }
   }
 
-  /**
-   * @private 将图片 Buffer 上传到 rs-api 后端。
-   * @param {Buffer} buf - 图片 Buffer。
-   * @returns {Promise<string>} 图片 ID。
-   */
   private async upload(buf: Buffer): Promise<string> {
-    const url = `${this.url}/image/upload`;
-    this.log.info('请求地址: %s (上传图片)', url);
     const payload = { type: 'data', data: buf.toString('base64') };
-    const { image_id } = await this.ctx.http.post<{ image_id: string }>(url, payload);
-    this.log.info('收到响应: %o', { image_id });
+    const { image_id } = await this.ctx.http.post<{ image_id: string }>(`${this.url}/image/upload`, payload);
     return image_id;
   }
 
-  /**
-   * @private 使用 rs-api 后端生成 meme。
-   * @param {string} key - 模板 key。
-   * @param {string[]} imgs - 图片 URL 列表。
-   * @param {string[]} texts - 文本列表。
-   * @param {Record<string, any>} args - 参数对象。
-   * @returns {Promise<h>} h 图像元素。
-   */
   private async createRs(key: string, imgs: string[], texts: string[], args: Record<string, any>): Promise<h> {
-    const imgIds = await Promise.all(
-      imgs.map(async (url) => {
-        const buf = await this.ctx.http.get<ArrayBuffer>(url, { responseType: 'arraybuffer' });
-        return this.upload(Buffer.from(buf));
-      })
-    )
-
-    const url = `${this.url}/memes/${key}`;
+    const imgBuffers = await Promise.all(imgs.map(url => this.ctx.http.get<ArrayBuffer>(url, { responseType: 'arraybuffer' })));
+    const imgIds = await Promise.all(imgBuffers.map(buf => this.upload(Buffer.from(buf))));
     const payload = { images: imgIds.map(id => ({ id })), texts, options: args };
-    this.log.info('请求地址: %s, 参数: %o', url, payload);
-    const res = await this.ctx.http.post<{ image_id: string }>(url, payload, { timeout: 30000 });
-    this.log.info('收到响应: %o', res);
-
-    const finalImageUrl = `${this.url}/image/${res.image_id}`;
-    this.log.info('请求地址: %s', finalImageUrl);
-    const finalImg = await this.ctx.http.get<ArrayBuffer>(finalImageUrl, { responseType: 'arraybuffer' });
-    this.log.info(`收到响应: Buffer(length=${finalImg.byteLength})`);
+    const res = await this.ctx.http.post<{ image_id: string }>(`${this.url}/memes/${key}`, payload, { timeout: 30000 });
+    const finalImg = await this.ctx.http.get<ArrayBuffer>(`${this.url}/image/${res.image_id}`, { responseType: 'arraybuffer' });
     return h.image(Buffer.from(finalImg), 'image/gif');
   }
 
-  /**
-   * @private 从 FastAPI 后端获取模板列表。
-   * @returns {Promise<MemeInfo[]>}
-   */
   private async fetchFast(): Promise<MemeInfo[]> {
-    const url = `${this.url}/memes/keys`;
-    this.log.info('请求地址: %s', url);
-    const keys = await this.ctx.http.get<string[]>(url);
-    this.log.info('收到响应: %o', keys);
-    const promises = keys.map(key => this.fetchFastInfo(key));
-    const results = await Promise.allSettled(promises);
-    return results
-      .filter(res => res.status === 'fulfilled' && res.value)
-      .map(res => (res as PromiseFulfilledResult<MemeInfo>).value);
+    const keys = await this.ctx.http.get<string[]>(`${this.url}/memes/keys`);
+    const results = await Promise.allSettled(keys.map(key => this.fetchFastInfo(key)));
+    return results.filter(res => res.status === 'fulfilled' && res.value).map(res => (res as PromiseFulfilledResult<MemeInfo>).value);
   }
 
-  /**
-   * @private 从 FastAPI 后端获取单个模板信息。
-   * @param {string} key - 模板 key。
-   * @returns {Promise<MemeInfo | null>}
-   */
   private async fetchFastInfo(key: string): Promise<MemeInfo | null> {
-    const url = `${this.url}/memes/${key}/info`;
-    try {
-      this.log.info('请求地址: %s', url);
-      const data = await this.ctx.http.get<any>(url, { timeout: 10000 });
-      this.log.info(`收到响应 (模板 ${key}): %o`, data);
-      return this.normFast(data);
-    } catch (error) {
-      this.log.warn(`获取 FastAPI 模板 '${key}' 的信息失败。`, error.message);
-      return null;
+    const maxRetries = 10
+    for (let i = 0; i < maxRetries; i++) {
+      try {
+        const data = await this.ctx.http.get<any>(`${this.url}/memes/${key}/info`, { timeout: 10000 });
+        return this.normFast(data);
+      } catch (error) {
+        if (i < maxRetries - 1) {
+          this.log.warn(`获取模板 '${key}' 信息失败 (第 ${i + 1} 次), 60秒后重试...`, error.message);
+          await new Promise(resolve => setTimeout(resolve, 60000));
+        } else {
+          this.log.error(`获取模板 '${key}' 信息失败, 已达最大重试次数。`, error.message);
+          return null;
+        }
+      }
     }
+    return null;
   }
 
-  /**
-   * @private 将 FastAPI 的原始数据规范化为 MemeInfo 格式。
-   * @param {any} data - 原始数据。
-   * @returns {MemeInfo | null}
-   */
   private normFast(data: any): MemeInfo | null {
     const params = data.params_type;
     if (!data || !params) return null;
-
     const args: MemeOption[] = [];
     if (params.args_type?.args_model?.properties) {
       for (const [key, prop] of Object.entries(params.args_type.args_model.properties as Record<string, any>)) {
@@ -429,33 +330,14 @@ export class MemeProvider {
         args.push({ name: key, type: prop.type, default: prop.default, description: prop.description, choices: prop.enum });
       }
     }
-
     return {
-      key: data.key,
-      keywords: data.keywords || data.aliases || [],
-      minImages: params.min_images,
-      maxImages: params.max_images,
-      minTexts: params.min_texts,
-      maxTexts: params.max_texts,
-      defaultTexts: params.default_texts || [],
-      args: args,
-      tags: data.tags || [],
-      shortcuts: (data.shortcuts || []).map(sc => ({
-        pattern: sc.key, humanized: sc.humanized, names: [], texts: [], options: { _raw_args: sc.args },
-      })),
-      date_created: data.date_created,
-      date_modified: data.date_modified,
+      key: data.key, keywords: data.keywords || data.aliases || [], minImages: params.min_images, maxImages: params.max_images,
+      minTexts: params.min_texts, maxTexts: params.max_texts, defaultTexts: params.default_texts || [], args: args,
+      tags: data.tags || [], shortcuts: (data.shortcuts || []).map(sc => ({ pattern: sc.key, humanized: sc.humanized, names: [], texts: [], options: { _raw_args: sc.args } })),
+      date_created: data.date_created, date_modified: data.date_modified,
     };
   }
 
-  /**
-   * @private 使用 FastAPI 后端生成 meme。
-   * @param {string} key - 模板 key。
-   * @param {string[]} imgs - 图片 URL 列表。
-   * @param {string[]} texts - 文本列表。
-   * @param {Record<string, any>} args - 参数对象。
-   * @returns {Promise<h>} h 图像元素。
-   */
   private async createFast(key: string, imgs: string[], texts: string[], args: Record<string, any>): Promise<h> {
     const form = new FormData();
     texts.forEach(t => form.append('texts', t));
@@ -466,48 +348,51 @@ export class MemeProvider {
     if (Object.keys(args).length) {
       form.append('args', JSON.stringify(args));
     }
-
-    const url = `${this.url}/memes/${key}/`;
-    this.log.info('请求地址: %s (FormData)', url);
-    const result = await this.ctx.http.post<ArrayBuffer>(url, form, {
-      responseType: 'arraybuffer', timeout: 30000,
-    });
-    this.log.info(`收到响应: Buffer(length=${result.byteLength})`);
+    const result = await this.ctx.http.post<ArrayBuffer>(`${this.url}/memes/${key}/`, form, { responseType: 'arraybuffer', timeout: 30000 });
     return h.image(Buffer.from(result), 'image/gif');
   }
 
   /**
-   * 注册 rs-api 专属的图片处理工具子命令。
+   * @method createToolCmds
+   * @description 注册 rs-api 专属的图片处理工具子命令。
    * @param {Command} cmd - 要挂载子命令的 `meme` 主命令。
-   * @returns {void}
    */
   public createToolCmds(cmd: Command): void {
-    const tool = cmd.subcommand('.tool', '图片处理工具');
+    const toolCmd = cmd.subcommand('.tool <image:img>', '图片处理工具')
+      .option('hflip', '- 水平翻转图片')
+      .option('vflip', '- 垂直翻转图片')
+      .option('grayscale', '- 灰度化图片')
+      .option('invert', '- 反色图片')
+      .option('reverse', '- 倒放 GIF')
 
-    const addTool = (name: string, desc: string, endpoint: string) => {
-      tool.subcommand(`.${name} <image:img>`, desc)
-        .action(async ({ session }, img) => {
-          if (!img?.attrs.src) return '请提供一张图片。';
-          try {
-            const buf = await this.ctx.http.get(img.attrs.src, { responseType: 'arraybuffer' });
-            const imgId = await this.upload(Buffer.from(buf));
-            const url = `${this.url}/tools/image_operations/${endpoint}`;
-            this.log.info('请求地址: %s', url);
-            const res = await this.ctx.http.post<{ image_id: string }>(url, { image_id: imgId });
-            this.log.info('收到响应: %o', res);
-            const finalBuf = await this.ctx.http.get(`${this.url}/image/${res.image_id}`, { responseType: 'arraybuffer' });
-            return h.image(finalBuf, 'image/png');
-          } catch (e) {
-            this.log.error('图片处理失败: ', e);
-            return `处理失败: ${e.message}`;
-          }
-        });
-    };
+    toolCmd.action(async ({ options }, img) => {
+      if (!img?.attrs.src) return '请提供一张图片。';
 
-    addTool('hflip', '水平翻转图片', 'flip_horizontal');
-    addTool('vflip', '垂直翻转图片', 'flip_vertical');
-    addTool('grayscale', '灰度化图片', 'grayscale');
-    addTool('invert', '反色图片', 'invert');
-    addTool('gif.reverse', '倒放 GIF', 'gif_reverse');
+      const endpointMap: Record<string, string> = {
+        hflip: 'flip_horizontal',
+        vflip: 'flip_vertical',
+        grayscale: 'grayscale',
+        invert: 'invert',
+        reverse: 'gif_reverse',
+      }
+
+      const activeOptions = Object.keys(endpointMap).filter(key => options[key]);
+
+      if (activeOptions.length > 1) return '一次只能使用一个处理选项。';
+      if (activeOptions.length === 0) return '请指定一个处理选项。';
+
+      const endpoint = endpointMap[activeOptions[0]];
+
+      try {
+        const buf = await this.ctx.http.get(img.attrs.src, { responseType: 'arraybuffer' });
+        const imgId = await this.upload(Buffer.from(buf));
+        const res = await this.ctx.http.post<{ image_id: string }>(`${this.url}/tools/image_operations/${endpoint}`, { image_id: imgId });
+        const finalBuf = await this.ctx.http.get(`${this.url}/image/${res.image_id}`, { responseType: 'arraybuffer' });
+        return h.image(finalBuf, 'image/png');
+      } catch (e) {
+        this.log.warn('图片处理失败', e);
+        return `处理失败: ${e.message}`;
+      }
+    });
   }
 }

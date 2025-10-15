@@ -8,13 +8,15 @@ import {} from 'koishi-plugin-puppeteer'
  */
 export class View {
   /**
-   * View 的构造函数。
+   * @constructor
+   * @description View 的构造函数。
    * @param {Context} ctx - Koishi 的上下文对象。
    */
   constructor(private ctx: Context) {}
 
   /**
-   * 将模板列表格式化为带分页的纯文本字符串。
+   * @method listAsText
+   * @description 将模板列表格式化为带分页的纯文本字符串。
    * @param {MemeInfo[]} list - MemeInfo 对象数组。
    * @param {number} page - 当前页码 (从 1 开始)。
    * @param {number} perPage - 每页显示的行数。
@@ -40,27 +42,28 @@ export class View {
     const validPage = Math.max(1, Math.min(page, total))
     const display = lines.slice((validPage - 1) * perPage, validPage * perPage)
 
-    const header = `表情模板列表 (第 ${validPage}/${total} 页, 共 ${list.length} 个模板)\n`
+    const header = `模板列表 (${validPage}/${total} 页, 共 ${list.length} 个)\n`
     return header + display.join('\n')
   }
 
   /**
-   * 将单个模板的详细信息格式化为易于阅读的纯文本字符串。
+   * @method infoAsText
+   * @description 将单个模板的详细信息格式化为易于阅读的纯文本字符串。
    * @param {MemeInfo} item - 要格式化的 MemeInfo 对象。
    * @returns {string} 格式化后的信息字符串。
    */
   infoAsText(item: MemeInfo): string {
     const output: string[] = []
-    output.push(`模板: ${item.keywords.join(', ') || item.key} (${item.key})`)
+    output.push(`名称: ${item.keywords.join(', ') || item.key} (${item.key})`)
     if (item.tags?.length) output.push(`标签: ${item.tags.join(', ')}`)
 
-    output.push('--- 参数需求 ---')
-    output.push(`图片: ${item.minImages}-${item.maxImages} 张`)
-    output.push(`文本: ${item.minTexts}-${item.maxTexts} 条`)
+    output.push('参数:')
+    output.push(`图片数: ${item.minImages}-${item.maxImages} 张`)
+    output.push(`文本数: ${item.minTexts}-${item.maxTexts} 条`)
     if (item.defaultTexts?.length) output.push(`默认文本: ${item.defaultTexts.join(', ')}`)
 
     if (item.args?.length) {
-      output.push('--- 其他参数 ---')
+      output.push('额外参数:')
       item.args.forEach(arg => {
         let desc = `- ${arg.name} (${arg.type || 'any'})`
         if (arg.default !== undefined) desc += `, 默认: ${JSON.stringify(arg.default)}`
@@ -71,21 +74,21 @@ export class View {
     }
 
     if (item.shortcuts?.length) {
-      output.push('--- 快捷指令 ---')
+      output.push('快捷指令:')
       item.shortcuts.forEach(sc => output.push(`- ${sc.humanized || sc.pattern}`))
     }
     if (item.date_created) {
-      output.push(`创建于: ${new Date(item.date_created).toLocaleString()}`)
+      output.push(`创建时间: ${new Date(item.date_created).toLocaleString()}`)
     }
 
     return output.join('\n')
   }
 
   /**
-   * 使用 Puppeteer 将 meme 模板列表渲染成图片。
+   * @method listAsImage
+   * @description 使用 Puppeteer 将 meme 模板列表渲染成图片。
    * @param {MemeInfo[]} list - MemeInfo 对象数组。
    * @returns {Promise<Buffer>} 解析为 PNG 图片 Buffer 的 Promise。
-   * @throws {Error} 如果 Puppeteer 渲染失败。
    */
   async listAsImage(list: MemeInfo[]): Promise<Buffer> {
     const page = await this.ctx.puppeteer.page()
@@ -108,11 +111,11 @@ export class View {
   }
 
   /**
-   * 使用 Puppeteer 将单个 meme 模板的详情渲染成图片。
+   * @method infoAsImage
+   * @description 使用 Puppeteer 将单个 meme 模板的详情渲染成图片。
    * @param {MemeInfo} item - MemeInfo 对象。
    * @param {string} [previewData] - 预览图的 Base64 数据 URL (可选)。
    * @returns {Promise<Buffer>} 解析为 PNG 图片 Buffer 的 Promise。
-   * @throws {Error} 如果 Puppeteer 渲染失败。
    */
   async infoAsImage(item: MemeInfo, previewData?: string): Promise<Buffer> {
     const page = await this.ctx.puppeteer.page()
@@ -120,7 +123,7 @@ export class View {
       const title = `${item.keywords.join(', ') || item.key} (${item.key})`
       const sections = [
         { title: '参数需求', items: [ `图片: ${item.minImages}-${item.maxImages}张`, `文本: ${item.minTexts}-${item.maxTexts}条`, ...(item.defaultTexts?.length ? [`默认文本: ${item.defaultTexts.join(', ')}`] : []) ] },
-        { title: '其他参数', items: (item.args || []).map(p => `<strong>${p.name}</strong> (${p.type||'any'})` + (p.default!==undefined?`, 默认: code>${JSON.stringify(p.default)}</code>`:'') + (p.choices?.length?`<br>可选: ${p.choices.join(', ')}`:'') + (p.description?`<br>描述: ${p.description}`:'')) },
+        { title: '其他参数', items: (item.args || []).map(p => `<strong>${p.name}</strong> (${p.type||'any'})` + (p.default!==undefined?`, 默认: <code>${JSON.stringify(p.default)}</code>`:'') + (p.choices?.length?`<br>可选: ${p.choices.join(', ')}`:'') + (p.description?`<br>描述: ${p.description}`:'')) },
         { title: '快捷指令', items: (item.shortcuts || []).map(sc => `• ${sc.humanized || sc.pattern}`) }
       ].filter(s => s.items.length > 0 && s.items.some(Boolean))
 

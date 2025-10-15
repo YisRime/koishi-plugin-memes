@@ -20,18 +20,29 @@ export const usage = `
 
 /**
  * @interface Config
- * @description 插件的配置项接口。
- * @property {string} apiUrl - meme 生成后端的 API 地址。
- * @property {boolean} useMiddleware - 是否启用关键词中间件。
- * @property {string} commandPrefix - 中间件模式下的触发前缀。
+ * @description 定义插件的配置项结构。
  */
 export interface Config {
+  /**
+   * @property apiUrl
+   * @description MemeGenerator 后端的 API 地址。
+   */
   apiUrl: string
+  /**
+   * @property useMiddleware
+   * @description 是否启用关键词中间件，允许通过前缀直接触发表情制作。
+   */
   useMiddleware: boolean
+  /**
+   * @property commandPrefix
+   * @description 在中间件模式下，用于触发表情制作的命令前缀。
+   */
   commandPrefix: string
 }
 
-/** Koishi 插件的配置项 Schema 定义。 */
+/**
+ * @description 使用 Koishi 的 Schema 系统定义插件的配置项，这将在 Koishi 控制台中生成一个配置表单。
+ */
 export const Config: Schema<Config> = Schema.object({
   apiUrl: Schema.string().description('后端 API 地址').default('http://127.0.0.1:2233'),
   useMiddleware: Schema.boolean().description('开启关键词触发').default(false),
@@ -39,49 +50,54 @@ export const Config: Schema<Config> = Schema.object({
 })
 
 /**
- * Koishi 插件的主应用函数 (apply)。
- * @param {Context} ctx - Koishi 的上下文对象。
- * @param {Config} config - 用户提供的插件配置。
- * @returns {Promise<void>}
+ * @function apply
+ * @description Koishi 插件的入口函数。当插件被加载时，Koishi 会调用此函数。
+ * @param {Context} ctx - Koishi 的上下文对象，提供了访问机器人、数据库、日志等核心服务的能力。
+ * @param {Config} config - 用户在 Koishi 控制台中配置的插件选项。
  */
 export async function apply(ctx: Context, config: Config): Promise<void> {
   const url = config.apiUrl.trim().replace(/\/+$/, '')
+
   const provider = new MemeProvider(ctx, url)
   const view = new View(ctx)
 
-  const startError = await provider.start()
-  if (startError) {
-    ctx.logger.error(`Meme 服务启动失败: ${startError}`)
+  try {
+    const { isRsApi, count, version } = await provider.start()
+    const backendType = isRsApi ? 'rs-api' : 'FastAPI'
+    ctx.logger.info(`MemeGenerator (后端) v${version} 已连接 (后端: ${backendType}, 模板: ${count} 个)`)
+  } catch (error) {
+    ctx.logger.error(`MemeGenerator (后端) 连接失败: ${error.message}`)
     return
   }
 
-  ctx.logger.info(`Meme 服务启动成功。后端模式: ${provider.isRsApi ? 'rs-api' : 'FastAPI'}`)
+  createCommands(ctx, provider, view)
 
-  createCmds(ctx, provider, view)
-  if (config.useMiddleware) createHook(ctx, config, provider)
+  if (config.useMiddleware) {
+    createMiddleware(ctx, config, provider)
+  }
 }
 
 /**
- * 注册所有与 meme 相关的命令。
- * @param {Context} ctx - Koishi 的上下文对象。
- * @param {MemeProvider} provider - MemeProvider 的实例。
- * @param {View} view - View 的实例。
- * @returns {void}
+ * @function createCommands
+ * @description 集中注册插件的所有命令和子命令。
+ * @param {Context} ctx - Koishi 上下文对象。
+ * @param {MemeProvider} provider - 数据提供者实例。
+ * @param {View} view - 视图渲染器实例。
  */
-function createCmds(ctx: Context, provider: MemeProvider, view: View): void {
+function createCommands(ctx: Context, provider: MemeProvider, view: View): void {
   const cmd = ctx.command('meme', '表情生成').usage('通过 MemeGenerator API 生成表情')
 
   cmd.subcommand('.list [page:string]', '查看可用表情模板列表')
     .action(async ({ session }, pageStr) => {
       const list = await provider.getList()
-      if (!list.length) return '模板列表为空'
+      if (!list.length) return '模板列表为空。'
 
       if (ctx.puppeteer) {
         try {
           const img = await view.listAsImage(list)
           return h.image(img, 'image/png')
         } catch (err) {
-          ctx.logger.warn('渲染模板列表为图片失败，将回退到文本模式。', err)
+          ctx.logger.warn(err)
         }
       }
 
@@ -92,10 +108,8 @@ function createCmds(ctx: Context, provider: MemeProvider, view: View): void {
   cmd.subcommand('.make <key:string> [params:elements]', '生成表情')
     .action(async ({ session }, key, input) => {
       if (!key) return '请输入要制作的表情包关键词。'
-
       const item = await provider.getInfo(key)
       if (!item) return `未找到与 “${key}” 相关的表情包模板。`
-
       return provider.create(item.key, input || [], session)
     })
 
@@ -116,7 +130,7 @@ function createCmds(ctx: Context, provider: MemeProvider, view: View): void {
           const img = await view.infoAsImage(item, data)
           return h.image(img, 'image/png')
         } catch (err) {
-          ctx.logger.warn(`为 '${key}' 渲染模板详情失败，将回退到文本模式。`, err)
+          ctx.logger.warn(err)
         }
       }
 
@@ -132,7 +146,7 @@ function createCmds(ctx: Context, provider: MemeProvider, view: View): void {
       const found = await provider.find(query)
       if (!found.length) return `未找到与 “${query}” 相关的表情包模板。`
       const text = found.slice(0, 30).map(t => ` - [${t.key}] ${t.keywords.join(', ')}`).join('\n')
-      return `搜索结果 (共 ${found.length} 条，显示前 30 条):\n${text}`
+      return `搜索到 ${found.length} 个结果 (最多显示30条):\n${text}`
     })
 
   if (provider.isRsApi) {
@@ -141,26 +155,29 @@ function createCmds(ctx: Context, provider: MemeProvider, view: View): void {
 }
 
 /**
- * 注册中间件，用于实现通过关键词直接触发表情制作。
- * @param {Context} ctx - Koishi 的上下文对象。
+ * @function createMiddleware
+ * @description 注册一个中间件，用于监听所有消息，实现通过关键词直接触发表情制作。
+ * @param {Context} ctx - Koishi 上下文对象。
  * @param {Config} config - 插件配置。
- * @param {MemeProvider} provider - MemeProvider 的实例。
- * @returns {void}
+ * @param {MemeProvider} provider - 数据提供者实例。
  */
-function createHook(ctx: Context, config: Config, provider: MemeProvider): void {
+function createMiddleware(ctx: Context, config: Config, provider: MemeProvider): void {
   ctx.middleware(async (session, next) => {
     const text = session.stripped.content.trim()
     const prefix = config.commandPrefix || ''
 
-    if (!prefix && !text) return next()
-    if (prefix && !text.startsWith(prefix)) return next()
+    if ((!prefix && !text) || (prefix && !text.startsWith(prefix))) {
+      return next()
+    }
 
     const cmdText = text.slice(prefix.length)
     const key = cmdText.split(/\s/)[0]
     if (!key) return next()
 
     const item = await provider.getInfo(key, false)
-    if (!item) return next()
+    if (!item) {
+      return next()
+    }
 
     return session.execute(`meme.make ${cmdText}`)
   }, true)
