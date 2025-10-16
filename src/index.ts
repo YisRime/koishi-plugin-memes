@@ -28,12 +28,12 @@ export interface Config {
 
 export const Config: Schema<Config> = Schema.object({
   apiUrl: Schema.string().description('后端 API 地址').default('http://127.0.0.1:2233'),
-  cacheAllInfo: Schema.boolean().description('缓存模板详细信息').default(false),
   triggerMode: Schema.union([
     Schema.const('disable').description('关闭'),
     Schema.const('noprefix').description('无前缀'),
     Schema.const('prefix').description('有前缀'),
   ]).description('关键词触发方式').default('disable'),
+  cacheAllInfo: Schema.boolean().description('缓存详细信息').default(false),
 })
 
 /**
@@ -47,7 +47,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
 
   try {
     const { version, count } = await provider.start()
-    ctx.logger.info(`MemeGenerator 已加载: v${version}（模板数: ${count}）`)
+    ctx.logger.info(`MemeGenerator v${version} 已加载（模板数: ${count}）`)
   } catch (error) {
     ctx.logger.error(`MemeGenerator 未加载: ${error.message}`)
     return
@@ -78,21 +78,43 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       const item = await provider.getInfo(keyOrKeyword)
       if (!item) return `模板 "${keyOrKeyword}" 不存在`
 
-      const output: string[] = [`名称: ${item.keywords.join(', ') || item.key} (${item.key})`]
+      const output: string[] = []
+      output.push(`名称: ${item.keywords.join(', ') || item.key} (${item.key})`)
       if (item.tags?.length) output.push(`标签: ${item.tags.join(', ')}`)
-      output.push('参数:', `  图片数: ${item.minImages}-${item.maxImages} 张`, `  文本数: ${item.minTexts}-${item.maxTexts} 条`)
+      const paramsLine = `参数: ${item.minImages}-${item.maxImages} 张图片 | ${item.minTexts}-${item.maxTexts} 条文本`
+      output.push(paramsLine)
       if (item.defaultTexts?.length) output.push(`  默认文本: ${item.defaultTexts.join(', ')}`)
-      if (item.args?.length) output.push('额外参数:',
-        ...item.args.map((arg) => {
-          let desc = `  - ${arg.name} (${arg.type || 'any'})`
-          if (arg.default !== undefined) desc += `, 默认: ${JSON.stringify(arg.default)}`
-          if (arg.description) desc += `\n    描述: ${arg.description}`
-          return desc
-        }))
-      if (item.shortcuts?.length) output.push('快捷指令:', ...item.shortcuts.map((sc) => `  - ${sc.humanized || sc.pattern}`))
+      if (item.args?.length) {
+        output.push('额外参数:')
+        for (const arg of item.args) {
+          let line = `  - ${arg.name} (${arg.type || 'any'})`
+          const details: string[] = []
+          if (arg.default !== undefined && arg.default !== null) details.push(`默认: ${JSON.stringify(arg.default)}`)
+          if (arg.choices?.length) details.push(`可选值: ${arg.choices.join(', ')}`)
+          if (details.length > 0) line += `, ${details.join(', ')}`
+          if (arg.description) line += `\n    描述: ${arg.description}`
+          output.push(line)
+        }
+      }
+      if (item.shortcuts?.length) {
+        output.push('快捷指令:')
+        for (const sc of item.shortcuts) {
+          let shortcutLine = `  - ${sc.humanized || sc.pattern || (sc as any).key}`
+          const options = (sc as any).options
+          if (options && Object.keys(options).length > 0) {
+            const opts = Object.entries(options).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(', ')
+            shortcutLine += ` (设置: ${opts})`
+          } else {
+            const args = (sc as any).args
+            if (args && args.length > 0) shortcutLine += ` (执行: ${args.join(' ')})`
+          }
+          output.push(shortcutLine)
+        }
+      }
       if (item.date_created) output.push(`创建时间: ${new Date(item.date_created).toLocaleString()}`)
-      const textInfo = output.join('\n')
+      if (item.date_modified) output.push(`修改时间: ${new Date(item.date_modified).toLocaleString()}`)
 
+      const textInfo = output.join('\n')
       const preview = await provider.getPreview(item.key)
       return h('message', preview instanceof Buffer ? h.image(preview, 'image/gif') : '', textInfo)
     })
@@ -111,7 +133,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
         text = (results as MemeInfo[]).map((t) => ` - [${t.key}] ${t.keywords.join(', ')}`).join('\n')
       }
 
-      return `搜索结果（共 ${results.length} 条）:\n${text}`
+      return `"${query}" 搜索结果（共 ${results.length} 条）:\n${text}`
     })
 
   if (provider.isRsApi) {
@@ -135,8 +157,8 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
 
     cmd.subcommand('.img <image:img>', '图片处理')
       .usage('对单张图片进行处理')
-      .option('hflip', '-h, --hflip 水平翻转')
-      .option('vflip', '-v, --vflip 垂直翻转')
+      .option('hflip', '-hf, --hflip 水平翻转')
+      .option('vflip', '-vf, --vflip 垂直翻转')
       .option('grayscale', '-g, --grayscale 灰度化')
       .option('invert', '-i, --invert 反色')
       .option('rotate', '-r, --rotate <degrees:number> 旋转图片')
@@ -179,8 +201,8 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
 
     cmd.subcommand('.merge <images:elements>', '图片合并')
       .usage('合并多张图片为一张图片或 GIF')
-      .option('horizontal', '-h, --horizontal 水平合并')
-      .option('vertical', '-v, --vertical 垂直合并')
+      .option('horizontal', '-hz, --horizontal 水平合并')
+      .option('vertical', '-vt, --vertical 垂直合并')
       .option('gif', '-g, --gif [duration:number] 合并为 GIF', { fallback: 0.1 })
       .action(({ options }, images) => {
         const imgSrcs = images?.filter((el) => el?.type === 'img' && el?.attrs?.src).map((el) => el.attrs.src as string)

@@ -50,6 +50,7 @@ export interface MemeInfo {
   tags?: string[]
   shortcuts?: MemeShortcut[]
   date_created?: string
+  date_modified?: string
 }
 
 /**
@@ -124,6 +125,7 @@ export class MemeProvider {
           tags: info.tags || [],
           shortcuts: info.shortcuts || [],
           date_created: info.date_created,
+          date_modified: info.date_modified,
         }))
       } else {
         const keys = await this.ctx.http.get<string[]>(`${this.url}/memes/keys`)
@@ -147,10 +149,12 @@ export class MemeProvider {
                   type: prop.type,
                   default: prop.default,
                   description: prop.description,
+                  choices: prop.enum || null,
                 })),
               tags: data.tags || [],
               shortcuts: data.shortcuts || [],
               date_created: data.date_created,
+              date_modified: data.date_modified,
             }
           })
       }
@@ -212,6 +216,7 @@ export class MemeProvider {
           tags: info.tags || [],
           shortcuts: info.shortcuts || [],
           date_created: info.date_created,
+          date_modified: info.date_modified,
         }
       } else {
         const data = await this.ctx.http.get<any>(`${this.url}/memes/${key}/info`)
@@ -230,10 +235,12 @@ export class MemeProvider {
               type: prop.type,
               default: prop.default,
               description: prop.description,
+              choices: prop.enum || null,
             })),
           tags: data.tags || [],
           shortcuts: data.shortcuts || [],
           date_created: data.date_created,
+          date_modified: data.date_modified,
         }
       }
     } catch (e) {
