@@ -57,6 +57,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     .usage('通过 MemeGenerator API 生成表情')
 
   cmd.subcommand('.list', '模板列表')
+    .usage('显示所有可用的表情模板列表')
     .action(async () => {
       const result = await provider.renderList()
       if (typeof result === 'string') return result
@@ -64,12 +65,14 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     })
 
   cmd.subcommand('.make <keyOrKeyword:string> [params:elements]', '表情生成')
+    .usage('根据模板名称或关键词制作表情')
     .action(async ({ session }, keyOrKeyword, input) => {
       if (!keyOrKeyword) return '请输入关键词'
       return provider.create(keyOrKeyword, input ?? [], session)
     })
 
   cmd.subcommand('.info <keyOrKeyword:string>', '模板详情')
+    .usage('查询指定表情模板的详细信息')
     .action(async ({}, keyOrKeyword) => {
       if (!keyOrKeyword) return '请输入关键词'
       const item = await provider.getInfo(keyOrKeyword)
@@ -95,6 +98,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     })
 
   cmd.subcommand('.search <query:string>', '搜索模板')
+    .usage('根据关键词搜索相关的表情模板')
     .action(async ({}, query) => {
       if (!query) return '请输入搜索关键词'
       const results = await provider.search(query)
@@ -112,7 +116,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
 
   if (provider.isRsApi) {
     cmd.subcommand('.stat <title:string> <type:string> <data:string>', '数据统计')
-      .usage('type=meme_count/time_count\ndata=key1:value1,key2:value2...')
+      .usage('类型为meme_count/time_count\n数据为key1:value1,key2:value2...')
       .action(async ({}, title, type, data) => {
         if (!title || !type || !data) return '输入参数不足'
         if (type !== 'meme_count' && type !== 'time_count') return '统计类型错误'
@@ -130,13 +134,14 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       })
 
     cmd.subcommand('.img <image:img>', '图片处理')
-      .option('hflip', '水平翻转')
-      .option('vflip', '垂直翻转')
-      .option('grayscale', '灰度化')
-      .option('invert', '反色')
+      .usage('对单张图片进行处理')
+      .option('hflip', '-h, --hflip 水平翻转')
+      .option('vflip', '-v, --vflip 垂直翻转')
+      .option('grayscale', '-g, --grayscale 灰度化')
+      .option('invert', '-i, --invert 反色')
       .option('rotate', '-r, --rotate <degrees:number> 旋转图片')
-      .option('resize', '--resize <size:string> 调整尺寸（宽|高）')
-      .option('crop', '-c, --crop <box:string> 裁剪图片（左|上|右|下）')
+      .option('resize', '-s, --resize <size:string> 调整尺寸 (宽|高)')
+      .option('crop', '-c, --crop <box:string> 裁剪图片 (左|上|右|下)')
       .action(async ({ options }, image) => {
         if (!image?.attrs?.src) return '请提供图片'
         const { src } = image.attrs
@@ -158,22 +163,22 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
         return provider.processImage('inspect', src)
       })
 
-    cmd.subcommand('.merge <images:elements>', '图片合并')
-      .option('horizontal', '-h, --horizontal 水平合并')
-      .option('vertical', '-v, --vertical 垂直合并')
-      .option('gif', '-g, --gif [duration:number] 合并为 GIF', { fallback: 0.1 })
-      .action(({ options }, images) => {
-        const imgSrcs = images?.filter((el) => el?.type === 'img' && el?.attrs?.src).map((el) => el.attrs.src as string)
-        if (!imgSrcs || imgSrcs.length < 2) return '请提供多张图片'
-        const activeOps = Object.keys(options).filter((key) => key !== 'session')
-        if (activeOps.length > 1) return '请仅指定一种操作'
-        if (options.horizontal) return provider.processImages('merge_horizontal', imgSrcs)
-        if (options.vertical) return provider.processImages('merge_vertical', imgSrcs)
-        if (options.gif !== undefined) return provider.processImages('gif_merge', imgSrcs, { duration: options.gif })
+    cmd.subcommand('.gif <image:img>', 'GIF 处理')
+      .usage('对单张 GIF 进行处理')
+      .option('split', '-s, --split 分解 GIF')
+      .option('reverse', '-r, --reverse 倒放 GIF')
+      .option('duration', '-d, --duration <duration:number> 调整帧间隔', { fallback: 0.1 })
+      .action(async ({ options }, image) => {
+        if (!image?.attrs?.src) return '请提供图片'
+        const { src } = image.attrs
+        if (options.split) return provider.processImage('gif_split', src)
+        if (options.reverse) return provider.processImage('gif_reverse', src)
+        if (options.duration !== undefined) return provider.processImage('gif_change_duration', src, { duration: options.duration })
         return '请指定操作'
       })
 
     cmd.subcommand('.merge <images:elements>', '图片合并')
+      .usage('合并多张图片为一张图片或 GIF')
       .option('horizontal', '-h, --horizontal 水平合并')
       .option('vertical', '-v, --vertical 垂直合并')
       .option('gif', '-g, --gif [duration:number] 合并为 GIF', { fallback: 0.1 })

@@ -1,7 +1,7 @@
 {
   "name": "koishi-plugin-memes",
   "description": "生成 Meme 表情包，支持 [meme-generator](https://github.com/MemeCrafters/meme-generator) 和 [meme-generator-rs](https://github.com/MemeCrafters/meme-generator-rs) 两种后端。",
-  "version": "1.7.4",
+  "version": "1.7.5",
   "contributors": [
     "Yis_Rime <yis_rime@outlook.com>"
   ],
