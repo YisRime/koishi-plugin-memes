@@ -19,10 +19,7 @@ export const usage = `
 `
 
 /**
- * @description 插件的配置项
- * @interface Config
- * @property {string} apiUrl - 后端 API 地址
- * @property {'disable' | 'noprefix' | 'prefix'} triggerMode - 关键词快捷触发模式
+ * 插件配置项接口
  */
 export interface Config {
   apiUrl: string
@@ -30,7 +27,7 @@ export interface Config {
 }
 
 /**
- * @description 配置项的 Schema，用于在 Koishi 的配置页面中显示
+ * 插件配置项 Schema 定义
  */
 export const Config: Schema<Config> = Schema.object({
   apiUrl: Schema.string().description('后端 API 地址').default('http://127.0.0.1:2233'),
@@ -38,50 +35,49 @@ export const Config: Schema<Config> = Schema.object({
     Schema.const('disable').description('关闭'),
     Schema.const('noprefix').description('无前缀'),
     Schema.const('prefix').description('有前缀'),
-  ]).description('关键词快捷触发').default('disable'),
+  ]).description('关键词触发方式').default('disable'),
 })
 
 /**
- * @description 插件主入口函数。
- * @param {Context} ctx - Koishi 插件上下文
- * @param {Config} config - 插件配置
+ * 插件的主入口函数
+ * @param ctx - Koishi 的上下文对象
+ * @param config - 插件的配置
  */
 export async function apply(ctx: Context, config: Config): Promise<void> {
   const url = config.apiUrl.trim().replace(/\/+$/, '')
-
   const provider = new MemeProvider(ctx, url)
   const view = new View(ctx)
 
-  const result = await provider.start()
-  if (!result.success) return
-  ctx.logger.info(`MemeGenerator 已加载: v${result.version}（模板数: ${result.count}）`)
+  try {
+    const { version, count } = await provider.start()
+    ctx.logger.info(`MemeGenerator 已加载: v${version}（模板数: ${count}）`)
+  } catch (error) {
+    ctx.logger.error(`MemeGenerator 未加载: ${error.message}`)
+    return
+  }
 
-  const cmd = ctx.command('memes', '表情生成').usage('通过 MemeGenerator API 生成表情')
+  const cmd = ctx.command('memes', '表情生成')
+    .usage('通过 MemeGenerator API 生成表情')
 
-  cmd.subcommand('.list [page:string]', '模板列表')
-    .action(async ({}, pageStr) => {
+  cmd.subcommand('.list [page:number]', '模板列表')
+    .action(async ({}, page = 1) => {
       const list = await provider.getList()
       if (!list.length) return '模板列表为空'
 
       if (ctx.puppeteer) {
         try {
-          const img = await view.listAsImage(list)
-          return h.image(img, 'image/png')
+          return h.image(await view.listAsImage(list), 'image/png')
         } catch (err) {
           ctx.logger.warn('图片渲染失败:', err)
         }
       }
-
-      const page = parseInt(pageStr, 10) || 1
       return view.listAsText(list, page, 20)
     })
 
   cmd.subcommand('.make <key:string> [params:elements]', '表情生成')
     .action(async ({ session }, key, input) => {
       if (!key) return '请输入关键词'
-      const item = await provider.getInfo(key)
-      if (!item) return `模板 "${key}" 不存在`
-      return provider.create(item.key, input || [], session)
+      return provider.create(key, input ?? [], session)
     })
 
   cmd.subcommand('.info <key:string>', '模板详情')
@@ -89,58 +85,110 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       if (!key) return '请输入关键词'
       const item = await provider.getInfo(key)
       if (!item) return `模板 "${key}" 不存在`
-
       const preview = await provider.getPreview(item.key)
 
       if (ctx.puppeteer) {
         try {
           const data = (preview instanceof Buffer) ? `data:image/gif;base64,${preview.toString('base64')}` : undefined
-          const img = await view.infoAsImage(item, data)
-          return h.image(img, 'image/png')
+          return h.image(await view.infoAsImage(item, data), 'image/png')
         } catch (err) {
           ctx.logger.warn(`图片渲染失败:`, err)
         }
       }
-
-      const reply: (h | string)[] = []
-      if (preview instanceof Buffer) reply.push(h.image(preview, 'image/gif'))
-      reply.push(view.infoAsText(item))
-      return reply
+      return h('message', (preview instanceof Buffer) ? h.image(preview, 'image/gif') : '', view.infoAsText(item))
     })
 
   cmd.subcommand('.search <key:string>', '搜索模板')
     .action(async ({}, key) => {
-      if (!key) return '请输入关键词'
+      if (!key) return '请输入搜索关键词'
       const found = await provider.find(key)
-      if (!found.length) return `无模板 "${key}" 相关结果`
+      if (!found.length) return `"${key}" 无相关模板`
       const text = found.map(t => ` - [${t.key}] ${t.keywords.join(', ')}`).join('\n')
-      return `搜索结果（共${found.length}条）:\n${text}`
+      return `搜索结果（共 ${found.length} 条）:\n${text}`
     })
 
-  if (provider.isRsApi) provider.createToolCmds(cmd)
+  if (provider.isRsApi) {
+    cmd.subcommand('.img <image:img>', '图片处理')
+      .option('hflip', '水平翻转')
+      .option('vflip', '垂直翻转')
+      .option('grayscale', '灰度化')
+      .option('invert', '反色')
+      .option('rotate', '-r, --rotate <degrees:number> 旋转图片')
+      .option('resize', '--resize <size:string> 调整尺寸 (格式: 宽|高)')
+      .option('crop', '-c, --crop <box:string> 裁剪图片 (格式: 左|上|右|下)')
+      .action(async ({ options }, image) => {
+        if (!image?.attrs?.src) return '请提供图片'
+        const { src } = image.attrs
+
+        const activeOps = Object.keys(options).filter(key => key !== 'session')
+        if (activeOps.length > 1) return '请仅指定一种操作'
+
+        if (options.hflip) return provider.processImage('flip_horizontal', src)
+        if (options.vflip) return provider.processImage('flip_vertical', src)
+        if (options.grayscale) return provider.processImage('grayscale', src)
+        if (options.invert) return provider.processImage('invert', src)
+        if (options.rotate !== undefined) return provider.processImage('rotate', src, { degrees: options.rotate })
+        if (options.resize) {
+          const [width, height] = options.resize.split('|').map(s => s.trim() ? Number(s) : undefined)
+          return provider.processImage('resize', src, { width, height })
+        }
+        if (options.crop) {
+          const [left, top, right, bottom] = options.crop.split('|').map(s => s.trim() ? Number(s) : undefined)
+          return provider.processImage('crop', src, { left, top, right, bottom })
+        }
+        return provider.processImage('inspect', src)
+      })
+
+    cmd.subcommand('.gif <image:img>', 'GIF 处理')
+      .option('split', '-s, --split 分解 GIF')
+      .option('reverse', '-r, --reverse 倒放 GIF')
+      .option('duration', '-d, --duration <duration:number> 调整帧间隔')
+      .action(async ({ options }, image) => {
+        if (!image?.attrs?.src) return '请提供图片'
+        const { src } = image.attrs
+
+        if (options.split) return provider.processImage('gif_split', src)
+        if (options.reverse) return provider.processImage('gif_reverse', src)
+        if (options.duration !== undefined) return provider.processImage('gif_change_duration', src, { duration: options.duration })
+        return '请指定操作'
+      })
+
+    cmd.subcommand('.merge <images:elements>', '图片合并')
+      .option('horizontal', '-h, --horizontal 水平合并')
+      .option('vertical', '-v, --vertical 垂直合并')
+      .option('gif', '-g, --gif [duration:number] 合并为 GIF')
+      .action(({ options }, images) => {
+        const imgSrcs = images?.filter(el => el?.type === 'img' && el?.attrs?.src).map(el => el.attrs.src as string)
+        if (!imgSrcs || imgSrcs.length < 2) return '请提供多张图片'
+
+        const activeOps = Object.keys(options).filter(key => key !== 'session')
+        if (activeOps.length > 1) return '请仅指定一种操作'
+
+        if (options.horizontal) return provider.processImages('merge_horizontal', imgSrcs)
+        if (options.vertical) return provider.processImages('merge_vertical', imgSrcs)
+        if ('gif' in options) {
+          const duration = typeof options.gif === 'number' ? options.gif : 0.1
+          return provider.processImages('gif_merge', imgSrcs, { duration })
+        }
+        return '请指定操作'
+      })
+  }
 
   if (config.triggerMode !== 'disable') {
-    const globalPrefixes = Array.isArray(ctx.root.config.prefix) ? ctx.root.config.prefix : [ctx.root.config.prefix || '']
-
+    const prefixes = Array.isArray(ctx.root.config.prefix) ? ctx.root.config.prefix : [ctx.root.config.prefix].filter(Boolean)
     ctx.middleware(async (session, next) => {
-      let text = session.stripped.content.trim()
-      if (!text) return next()
+      let content = session.stripped.content.trim()
+      if (!content) return next()
 
       if (config.triggerMode === 'prefix') {
-        const prefix = globalPrefixes.find(p => text.startsWith(p))
+        const prefix = prefixes.find(p => content.startsWith(p))
         if (!prefix) return next()
-        text = text.slice(prefix.length).trim()
+        content = content.slice(prefix.length).trim()
       }
 
-      const firstSpace = text.indexOf(' ')
-      const key = firstSpace > 0 ? text.slice(0, firstSpace) : text
-      const args = firstSpace > 0 ? text.slice(firstSpace + 1) : ''
-
-      if (!key) return next()
+      const [key, ...args] = content.split(/\s+/)
       const item = await provider.getInfo(key, false)
-      if (!item) return next()
-
-      return session.execute(`meme.make ${key} ${args}`)
+      return item ? session.execute(`memes.make ${key} ${args.join(' ')}`) : next()
     }, true)
   }
 }
