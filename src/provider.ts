@@ -181,6 +181,41 @@ export class MemeProvider {
   }
 
   /**
+   * 根据关键词查找对应的快捷指令。
+   * 仅在 `cacheAllInfo` 模式下有效。
+   * @param word - 要查找的快捷指令关键词。
+   * @returns 如果找到，则返回包含模板信息和快捷指令参数的对象，否则返回 null。
+   */
+  public findShortcut(word: string): { meme: MemeInfo, shortcutArgs: string[] } | null {
+    if (!this.config.cacheAllInfo) return null
+
+    for (const meme of this.cache) {
+      if (!meme.shortcuts) continue
+      for (const sc of meme.shortcuts) {
+        const shortcutKey = sc.pattern || (sc as any).key
+        if (shortcutKey === word) {
+          const shortcutArgs: string[] = []
+          const options = (sc as any).options
+          if (options && typeof options === 'object') {
+            for (const [key, value] of Object.entries(options)) {
+              if (typeof value === 'boolean' && value === true) {
+                shortcutArgs.push(`--${key}`)
+              } else {
+                const formattedValue = String(value).includes(' ') ? `"${value}"` : value
+                shortcutArgs.push(`--${key}=${formattedValue}`)
+              }
+            }
+          }
+          const args = (sc as any).args
+          if (Array.isArray(args)) shortcutArgs.push(...args)
+          return { meme, shortcutArgs }
+        }
+      }
+    }
+    return null
+  }
+
+  /**
    * 根据 key 或关键词获取单个模板信息。
    * - 缓存模式下：从内存中直接查找。
    * - 非缓存模式下：通过网络请求获取。
@@ -301,10 +336,11 @@ export class MemeProvider {
    * @param input - Koishi 的 h 元素数组，包含图片和文本。
    * @param session - 当前 Koishi 会话对象。
    * @returns 返回一个包含生成图片的 h 元素，或在失败时返回错误信息的字符串。
+   * @throws {Error} 当参数不足或过多时，抛出名为 'MissError' 的错误。
    */
   async create(keyOrKeyword: string, input: h[], session: Session,): Promise<h | string> {
     const item = await this.getInfo(keyOrKeyword)
-    if (!item) return `模板 "${keyOrKeyword}" 不存在或获取失败`
+    if (!item) return `模板 "${keyOrKeyword}" 不存在`
 
     const key = item.key
     const imgs: string[] = []
@@ -330,8 +366,17 @@ export class MemeProvider {
     }
 
     if (imgs.length < item.minImages && item.minImages > 0) imgs.unshift(await getAvatar(session))
-    if (imgs.length < item.minImages || imgs.length > item.maxImages) return `现有 ${imgs.length} 张图片，但需要 ${item.minImages}-${item.maxImages} 张`
-    if (texts.length < item.minTexts || texts.length > item.maxTexts) return `现有 ${texts.length} 条文本，但需要 ${item.minTexts}-${item.maxTexts} 条`
+
+    if (imgs.length < item.minImages || imgs.length > item.maxImages) {
+      const err = new Error(`需要 ${item.minImages}-${item.maxImages} 张图片，当前有 ${imgs.length} 张`);
+      err.name = 'MissError';
+      throw err;
+    }
+    if (texts.length < item.minTexts || texts.length > item.maxTexts) {
+      const err = new Error(`需要 ${item.minTexts}-${item.maxTexts} 段文本，当前有 ${texts.length} 段`);
+      err.name = 'MissError';
+      throw err;
+    }
 
     try {
       if (this.isRsApi) {

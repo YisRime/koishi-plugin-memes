@@ -68,7 +68,29 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     .usage('根据模板名称或关键词制作表情')
     .action(async ({ session }, keyOrKeyword, input) => {
       if (!keyOrKeyword) return '请输入关键词'
-      return provider.create(keyOrKeyword, input ?? [], session)
+
+      let targetKey = keyOrKeyword
+      let initialInput = input ?? []
+
+      const shortcut = provider.findShortcut(keyOrKeyword)
+      if (shortcut) {
+        targetKey = shortcut.meme.key
+        const argsString = shortcut.shortcutArgs.join(' ')
+        const shortcutElements = h.parse(argsString)
+        initialInput = [...shortcutElements, ...initialInput]
+      }
+
+      try {
+        return await provider.create(targetKey, initialInput, session)
+      } catch (e) {
+        if (e?.name === 'MissError') {
+          await session.send(`${e.message}\n请在 60 秒内发送补充内容，超时将自动取消。`)
+          const response = await session.prompt(60000)
+          if (!response) return '已取消生成'
+          const combinedInput = [...initialInput, ...h.parse(response)]
+          return provider.create(targetKey, combinedInput, session)
+        }
+      }
     })
 
   cmd.subcommand('.info <keyOrKeyword:string>', '模板详情')
@@ -79,40 +101,57 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       if (!item) return `模板 "${keyOrKeyword}" 不存在`
 
       const output: string[] = []
-      output.push(`名称: ${item.keywords.join(', ') || item.key} (${item.key})`)
+      output.push(`${item.keywords.join('/') || item.key} (${item.key})`)
       if (item.tags?.length) output.push(`标签: ${item.tags.join(', ')}`)
-      const paramsLine = `参数: ${item.minImages}-${item.maxImages} 张图片 | ${item.minTexts}-${item.maxTexts} 条文本`
-      output.push(paramsLine)
-      if (item.defaultTexts?.length) output.push(`  默认文本: ${item.defaultTexts.join(', ')}`)
+
+      const inputParts: string[] = []
+      if (item.maxTexts > 0) {
+          const textCount = item.minTexts === item.maxTexts ? item.minTexts : `${item.minTexts}-${item.maxTexts}`
+          inputParts.push(`文本 ${textCount}`)
+      }
+      if (item.maxImages > 0) {
+          const imageCount = item.minImages === item.maxImages ? item.minImages : `${item.minImages}-${item.maxImages}`
+          inputParts.push(`图片 ${imageCount}`)
+      }
+      if (inputParts.length > 0) {
+          let params_line = `参数: ${inputParts.join(', ')}`
+          if (item.defaultTexts?.length) params_line += ` [${item.defaultTexts.join(', ')}]`
+          output.push(params_line)
+      }
       if (item.args?.length) {
-        output.push('额外参数:')
+        output.push('选项:')
         for (const arg of item.args) {
           let line = `  - ${arg.name} (${arg.type || 'any'})`
           const details: string[] = []
-          if (arg.default !== undefined && arg.default !== null) details.push(`默认: ${JSON.stringify(arg.default)}`)
-          if (arg.choices?.length) details.push(`可选值: ${arg.choices.join(', ')}`)
-          if (details.length > 0) line += `, ${details.join(', ')}`
-          if (arg.description) line += `\n    描述: ${arg.description}`
+          if (arg.default !== undefined && arg.default !== null && arg.default !== '') details.push(`[${JSON.stringify(arg.default).replace(/"/g, '')}]`)
+          if (arg.choices?.length) details.push(`[${arg.choices.join(',')}]`)
+          let details_str = details.join(' ')
+          if (details_str) line += ` ${details_str}`
+          if (arg.description) line += ` | ${arg.description}`
           output.push(line)
         }
       }
       if (item.shortcuts?.length) {
         output.push('快捷指令:')
+        const shortcuts_list: string[] = []
         for (const sc of item.shortcuts) {
-          let shortcutLine = `  - ${sc.humanized || sc.pattern || (sc as any).key}`
+          const key = sc.humanized || sc.pattern || (sc as any).key
+          let shortcutInfo = key
           const options = (sc as any).options
           if (options && Object.keys(options).length > 0) {
-            const opts = Object.entries(options).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(', ')
-            shortcutLine += ` (设置: ${opts})`
+            const opts = Object.entries(options).map(([k, v]) => `${k}=${v}`).join(',')
+            shortcutInfo += `(${opts})`
           } else {
             const args = (sc as any).args
-            if (args && args.length > 0) shortcutLine += ` (执行: ${args.join(' ')})`
+            if (args && args.length > 0) shortcutInfo += `(${args.join(' ')})`
           }
-          output.push(shortcutLine)
+          shortcuts_list.push(shortcutInfo)
+        }
+        for (let i = 0; i < shortcuts_list.length; i += 2) {
+            const line = `  ${shortcuts_list[i]}${shortcuts_list[i + 1] ? ' | ' + shortcuts_list[i + 1] : ''}`
+            output.push(line)
         }
       }
-      if (item.date_created) output.push(`创建时间: ${new Date(item.date_created).toLocaleString()}`)
-      if (item.date_modified) output.push(`修改时间: ${new Date(item.date_modified).toLocaleString()}`)
 
       const textInfo = output.join('\n')
       const preview = await provider.getPreview(item.key)
@@ -226,15 +265,20 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     ctx.middleware(async (session, next) => {
       let content = session.stripped.content.trim()
       if (!content) return next()
-
       if (config.triggerMode === 'prefix') {
         const prefix = prefixes.find((p) => content.startsWith(p))
         if (!prefix) return next()
         content = content.slice(prefix.length).trim()
       }
+      const [word, ...args] = content.split(/\s+/)
 
-      const [keyOrKeyword, ...args] = content.split(/\s+/)
-      if (provider.isTriggerable(keyOrKeyword)) return session.execute(`memes.make ${keyOrKeyword} ${args.join(' ')}`)
+      if (provider.isTriggerable(word)) return session.execute(`memes.make ${content}`)
+      const shortcut = provider.findShortcut(word)
+      if (shortcut) {
+        const shortcutArgsString = shortcut.shortcutArgs.join(' ')
+        const userArgsString = args.join(' ')
+        return session.execute(`memes.make ${shortcut.meme.key} ${shortcutArgsString} ${userArgsString}`)
+      }
       return next()
     }, true)
   }
