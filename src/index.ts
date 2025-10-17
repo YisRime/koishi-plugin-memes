@@ -23,18 +23,36 @@ export const usage = `
 export interface Config {
   apiUrl: string
   cacheAllInfo: boolean
+  useUserAvatar: boolean
+  fillDefaultText: 'disable' | 'missing' | 'insufficient'
+  ignoreExcess: boolean
   triggerMode: 'disable' | 'noprefix' | 'prefix'
+  sendRandomInfo: boolean
 }
 
-export const Config: Schema<Config> = Schema.object({
-  apiUrl: Schema.string().description('后端 API 地址').default('http://127.0.0.1:2233'),
-  triggerMode: Schema.union([
-    Schema.const('disable').description('关闭'),
-    Schema.const('noprefix').description('无前缀'),
-    Schema.const('prefix').description('有前缀'),
-  ]).description('关键词触发方式').default('disable'),
-  cacheAllInfo: Schema.boolean().description('缓存详细信息').default(false),
-})
+export const Config: Schema<Config> = Schema.intersect([
+  Schema.object({
+    apiUrl: Schema.string().description('后端 API 地址').default('http://127.0.0.1:2233'),
+    cacheAllInfo: Schema.boolean().description('缓存详细信息').default(true),
+  }).description('基础设置'),
+  Schema.object({
+    useUserAvatar: Schema.boolean().description('自动补充用户头像').default(true),
+    fillDefaultText: Schema.union([
+      Schema.const('disable').description('关闭'),
+      Schema.const('insufficient').description('自动'),
+      Schema.const('missing').description('仅无文本'),
+    ]).description('自动补充默认文本').default('missing'),
+    ignoreExcess: Schema.boolean().description('自动忽略多余参数').default(true),
+  }).description('参数设置'),
+  Schema.object({
+    triggerMode: Schema.union([
+      Schema.const('disable').description('关闭'),
+      Schema.const('noprefix').description('无前缀'),
+      Schema.const('prefix').description('有前缀'),
+    ]).description('关键词触发方式').default('disable'),
+    sendRandomInfo: Schema.boolean().description('随机表情显示模板名').default(true),
+  }).description('其它设置'),
+])
 
 /**
  * Koishi 插件的主入口函数。
@@ -49,7 +67,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     const { version, count } = await provider.start()
     ctx.logger.info(`MemeGenerator v${version} 已加载（模板数: ${count}）`)
   } catch (error) {
-    ctx.logger.error(`MemeGenerator 未加载: ${error.message}`)
+    ctx.logger.error(`MemeGenerator 未加载: ${error}`)
     return
   }
 
@@ -84,11 +102,31 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
         return await provider.create(targetKey, initialInput, session)
       } catch (e) {
         if (e?.name === 'MissError') {
-          await session.send(`${e.message}\n请在 60 秒内发送补充内容，超时将自动取消。`)
+          await session.send(`${e.message}，请发送内容补充参数`)
           const response = await session.prompt(60000)
           if (!response) return '已取消生成'
           const combinedInput = [...initialInput, ...h.parse(response)]
           return provider.create(targetKey, combinedInput, session)
+        }
+      }
+    })
+
+  cmd.subcommand('.random [params:elements]', '随机表情')
+    .usage('随机选择一个模板并制作表情')
+    .action(async ({ session }, input) => {
+      const initialInput = input ?? []
+
+      for (let i = 0; i < 3; i++) {
+        const item = await provider.getRandom()
+        if (!item) return '无可用模板'
+
+        try {
+          const result = await provider.create(item.key, initialInput, session)
+          if (config.sendRandomInfo) await session.send(`模板名: ${item.keywords.join('/') || item.key} (${item.key})`)
+          return result
+        } catch (e) {
+          ctx.logger.warn('表情随机失败:', e)
+          return `表情随机失败: ${e.message}`
         }
       }
     })

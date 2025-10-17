@@ -279,7 +279,7 @@ export class MemeProvider {
         }
       }
     } catch (e) {
-      this.logger.warn(`获取模板 "${key}" 信息失败:`, e.message)
+      this.logger.warn(`获取模板 "${key}" 信息失败:`, e)
       return null
     }
   }
@@ -312,6 +312,24 @@ export class MemeProvider {
   }
 
   /**
+   * 随机获取一个模板信息。
+   * - 缓存模式下：从内存中随机选择。
+   * - 非缓存模式下：随机选择一个 key 再通过网络请求获取。
+   * @returns 返回找到的 MemeInfo 对象，如果找不到则返回 null。
+   */
+  async getRandom(): Promise<MemeInfo | null> {
+    if (this.config.cacheAllInfo) {
+      if (!this.cache.length) return null
+      const randomIndex = Math.floor(Math.random() * this.cache.length)
+      return this.cache[randomIndex]
+    }
+
+    if (!this.keys.length) return null
+    const randomKey = this.keys[Math.floor(Math.random() * this.keys.length)]
+    return this.getInfo(randomKey)
+  }
+
+  /**
    * 获取指定模板的预览图。
    * @param key - 模板的 key。
    * @returns 返回包含图片 Buffer 的 Promise，或在失败时返回错误信息的字符串。
@@ -325,8 +343,8 @@ export class MemeProvider {
       }
       return Buffer.from(await this.ctx.http.get<ArrayBuffer>(previewUrl, { responseType: 'arraybuffer' }))
     } catch (e) {
-      this.logger.warn(`预览图 "${key}" 获取失败:`, e.message)
-      return `预览图获取失败: ${e.message}`
+      this.logger.warn(`预览图 "${key}" 获取失败:`, e)
+      return `[预览图获取失败: ${e.message}]`
     }
   }
 
@@ -336,15 +354,15 @@ export class MemeProvider {
    * @param input - Koishi 的 h 元素数组，包含图片和文本。
    * @param session - 当前 Koishi 会话对象。
    * @returns 返回一个包含生成图片的 h 元素，或在失败时返回错误信息的字符串。
-   * @throws {Error} 当参数不足或过多时，抛出名为 'MissError' 的错误。
+   * @throws {Error} 当参数不足时，抛出名为 'MissError' 的错误。
    */
   async create(keyOrKeyword: string, input: h[], session: Session,): Promise<h | string> {
     const item = await this.getInfo(keyOrKeyword)
     if (!item) return `模板 "${keyOrKeyword}" 不存在`
 
     const key = item.key
-    const imgs: string[] = []
-    const texts: string[] = []
+    let imgs: string[] = []
+    let texts: string[] = []
     const args: Record<string, any> = {}
 
     for (const el of input) {
@@ -365,15 +383,40 @@ export class MemeProvider {
       }
     }
 
-    if (imgs.length < item.minImages && item.minImages > 0) imgs.unshift(await getAvatar(session))
+    if (this.config.useUserAvatar && (item.minImages - imgs.length === 1)) imgs.unshift(await getAvatar(session))
 
-    if (imgs.length < item.minImages || imgs.length > item.maxImages) {
-      const err = new Error(`需要 ${item.minImages}-${item.maxImages} 张图片，当前有 ${imgs.length} 张`);
+    if (this.config.fillDefaultText !== 'disable' && item.defaultTexts?.length > 0) {
+      if (this.config.fillDefaultText === 'missing' && texts.length === 0) {
+        texts = [...item.defaultTexts];
+      } else if (this.config.fillDefaultText === 'insufficient' && texts.length < item.minTexts) {
+        const needed = item.minTexts - texts.length;
+        const availableDefaults = item.defaultTexts.slice(texts.length);
+        texts.push(...availableDefaults.slice(0, needed));
+      }
+    }
+
+    if (imgs.length > item.maxImages) {
+      if (this.config.ignoreExcess) {
+        imgs.splice(item.maxImages)
+      } else {
+        return `当前共有 ${imgs.length}/${item.maxImages} 张图片，请删除多余参数`
+      }
+    }
+    if (texts.length > item.maxTexts) {
+      if (this.config.ignoreExcess) {
+        texts.splice(item.maxTexts)
+      } else {
+        return `当前共有 ${texts.length}/${item.maxTexts} 条文本，请删除多余参数`
+      }
+    }
+
+    if (imgs.length < item.minImages) {
+      const err = new Error(`当前共有 ${imgs.length}/${item.minImages} 张图片`);
       err.name = 'MissError';
       throw err;
     }
-    if (texts.length < item.minTexts || texts.length > item.maxTexts) {
-      const err = new Error(`需要 ${item.minTexts}-${item.maxTexts} 段文本，当前有 ${texts.length} 段`);
+    if (texts.length < item.minTexts) {
+      const err = new Error(`当前共有 ${texts.length}/${item.minTexts} 条文本`);
       err.name = 'MissError';
       throw err;
     }
@@ -400,7 +443,7 @@ export class MemeProvider {
         return h.image(Buffer.from(result), 'image/gif')
       }
     } catch (e) {
-      this.logger.warn(`图片生成失败 (${item.key}):`, e.message)
+      this.logger.warn(`图片生成失败 (${item.key}):`, e)
       return `图片生成失败: ${e.message}`
     }
   }
@@ -421,7 +464,7 @@ export class MemeProvider {
         return Buffer.from(buf)
       }
     } catch (e) {
-      this.logger.warn('列表渲染失败:', e.message)
+      this.logger.warn('列表渲染失败:', e)
       return `列表渲染失败: ${e.message}`
     }
   }
@@ -440,7 +483,7 @@ export class MemeProvider {
       const buf = await this.ctx.http.get<Buffer>(`${this.url}/image/${res.image_id}`, { responseType: 'arraybuffer' })
       return Buffer.from(buf)
     } catch (e) {
-      this.logger.warn('统计图渲染失败:', e.message)
+      this.logger.warn('统计图渲染失败:', e)
       return `统计图渲染失败: ${e.message}`
     }
   }
@@ -478,7 +521,7 @@ export class MemeProvider {
       const finalBuf = await this.ctx.http.get<ArrayBuffer>(`${this.url}/image/${res.image_id}`, { responseType: 'arraybuffer' })
       return h.image(Buffer.from(finalBuf), 'image/png')
     } catch (e) {
-      this.logger.warn(`图片 "${endpoint}" 处理失败:`, e.message)
+      this.logger.warn(`图片 "${endpoint}" 处理失败:`, e)
       return `图片处理失败: ${e.message}`
     }
   }
@@ -496,7 +539,7 @@ export class MemeProvider {
       const finalBuf = await this.performMerge(image_ids, endpoint, payload)
       return h.image(finalBuf, 'image/png')
     } catch (e) {
-      this.logger.warn(`图片 "${endpoint}" 处理失败:`, e.message)
+      this.logger.warn(`图片 "${endpoint}" 处理失败:`, e)
       return `图片处理失败: ${e.message}`
     }
   }
