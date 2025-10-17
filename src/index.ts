@@ -26,15 +26,23 @@ export interface Config {
   useUserAvatar: boolean
   fillDefaultText: 'disable' | 'missing' | 'insufficient'
   ignoreExcess: boolean
+  sortListBy?: 'key_asc' | 'key_desc' | 'keywords_asc' | 'keywords_desc' | 'keywords_pinyin_asc' | 'keywords_pinyin_desc' | 'date_created_asc' | 'date_created_desc' | 'date_modified_asc' | 'date_modified_desc'
+  listTextTemplate?: string
+  showListIcon?: boolean
+  markAsNewDays?: number
   triggerMode: 'disable' | 'noprefix' | 'prefix'
   sendRandomInfo: boolean
+  blacklist: {
+    guildId: string
+    keyId: string
+  }[]
 }
 
 export const Config: Schema<Config> = Schema.intersect([
   Schema.object({
     apiUrl: Schema.string().description('后端 API 地址').default('http://127.0.0.1:2233'),
     cacheAllInfo: Schema.boolean().description('缓存详细信息').default(true),
-  }).description('基础设置'),
+  }).description('基础配置'),
   Schema.object({
     useUserAvatar: Schema.boolean().description('自动补充用户头像').default(true),
     fillDefaultText: Schema.union([
@@ -43,7 +51,7 @@ export const Config: Schema<Config> = Schema.intersect([
       Schema.const('missing').description('仅无文本'),
     ]).description('自动补充默认文本').default('missing'),
     ignoreExcess: Schema.boolean().description('自动忽略多余参数').default(true),
-  }).description('参数设置'),
+  }).description('参数配置'),
   Schema.object({
     triggerMode: Schema.union([
       Schema.const('disable').description('关闭'),
@@ -51,7 +59,28 @@ export const Config: Schema<Config> = Schema.intersect([
       Schema.const('prefix').description('有前缀'),
     ]).description('关键词触发方式').default('disable'),
     sendRandomInfo: Schema.boolean().description('随机表情显示模板名').default(true),
-  }).description('其它设置'),
+    blacklist: Schema.array(Schema.object({
+      guildId: Schema.string().description('群号'),
+      keyId: Schema.string().description('模板名'),
+    })).description('表情禁用规则').role('table'),
+  }).description('其它配置'),
+  Schema.object({
+    sortListBy: Schema.union([
+      Schema.const('key_asc').description('表情名 (升)'),
+      Schema.const('key_desc').description('表情名 (降)'),
+      Schema.const('keywords_asc').description('关键词 (升)'),
+      Schema.const('keywords_desc').description('关键词 (降)'),
+      Schema.const('keywords_pinyin_asc').description('关键词拼音 (升)'),
+      Schema.const('keywords_pinyin_desc').description('关键词拼音 (降)'),
+      Schema.const('date_created_asc').description('创建时间 (升)'),
+      Schema.const('date_created_desc').description('创建时间 (降)'),
+      Schema.const('date_modified_asc').description('修改时间 (升)'),
+      Schema.const('date_modified_desc').description('修改时间 (降)'),
+    ]).description('列表排序方式'),
+    listTextTemplate: Schema.string().description('列表文字模板'),
+    showListIcon: Schema.boolean().description('添加分类图标'),
+    markAsNewDays: Schema.number().description('"新"标记天数'),
+  }).description('菜单配置'),
 ])
 
 /**
@@ -76,8 +105,8 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
 
   cmd.subcommand('.list', '模板列表')
     .usage('显示所有可用的表情模板列表')
-    .action(async () => {
-      const result = await provider.renderList()
+    .action(async ({ session }) => {
+      const result = await provider.renderList(session)
       if (typeof result === 'string') return result
       return h.image(result, 'image/png')
     })
@@ -87,15 +116,19 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     .action(async ({ session }, keyOrKeyword, input) => {
       if (!keyOrKeyword) return '请输入关键词'
 
-      let targetKey = keyOrKeyword
+      let targetKey: string
       let initialInput = input ?? []
 
-      const shortcut = provider.findShortcut(keyOrKeyword)
+      const shortcut = provider.findShortcut(keyOrKeyword, session)
       if (shortcut) {
         targetKey = shortcut.meme.key
         const argsString = shortcut.shortcutArgs.join(' ')
         const shortcutElements = h.parse(argsString)
         initialInput = [...shortcutElements, ...initialInput]
+      } else {
+        const item = await provider.getInfo(keyOrKeyword, session)
+        if (!item) return `模板 "${keyOrKeyword}" 不存在`
+        targetKey = item.key
       }
 
       try {
@@ -117,7 +150,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       const initialInput = input ?? []
 
       for (let i = 0; i < 3; i++) {
-        const item = await provider.getRandom()
+        const item = await provider.getRandom(session)
         if (!item) return '无可用模板'
 
         try {
@@ -133,9 +166,9 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
 
   cmd.subcommand('.info <keyOrKeyword:string>', '模板详情')
     .usage('查询指定表情模板的详细信息')
-    .action(async ({}, keyOrKeyword) => {
+    .action(async ({ session }, keyOrKeyword) => {
       if (!keyOrKeyword) return '请输入关键词'
-      const item = await provider.getInfo(keyOrKeyword)
+      const item = await provider.getInfo(keyOrKeyword, session)
       if (!item) return `模板 "${keyOrKeyword}" 不存在`
 
       const output: string[] = []
@@ -145,14 +178,14 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       const inputParts: string[] = []
       if (item.maxTexts > 0) {
           const textCount = item.minTexts === item.maxTexts ? item.minTexts : `${item.minTexts}-${item.maxTexts}`
-          inputParts.push(`文本 ${textCount}`)
+          inputParts.push(`${textCount} 文本`)
       }
       if (item.maxImages > 0) {
           const imageCount = item.minImages === item.maxImages ? item.minImages : `${item.minImages}-${item.maxImages}`
-          inputParts.push(`图片 ${imageCount}`)
+          inputParts.push(`${imageCount} 图片`)
       }
       if (inputParts.length > 0) {
-          let params_line = `参数: ${inputParts.join(', ')}`
+          let params_line = `参数: ${inputParts.join('，')}`
           if (item.defaultTexts?.length) params_line += ` [${item.defaultTexts.join(', ')}]`
           output.push(params_line)
       }
@@ -198,9 +231,9 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
 
   cmd.subcommand('.search <query:string>', '搜索模板')
     .usage('根据关键词搜索相关的表情模板')
-    .action(async ({}, query) => {
+    .action(async ({ session }, query) => {
       if (!query) return '请输入搜索关键词'
-      const results = await provider.search(query)
+      const results = await provider.search(query, session)
       if (!results.length) return `"${query}" 无相关模板`
 
       let text: string
@@ -310,8 +343,10 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       }
       const [word, ...args] = content.split(/\s+/)
 
-      if (provider.isTriggerable(word)) return session.execute(`memes.make ${content}`)
-      const shortcut = provider.findShortcut(word)
+      const item = await provider.getInfo(word, session)
+      if (item) return session.execute(`memes.make ${content}`)
+
+      const shortcut = provider.findShortcut(word, session)
       if (shortcut) {
         const shortcutArgsString = shortcut.shortcutArgs.join(' ')
         const userArgsString = args.join(' ')

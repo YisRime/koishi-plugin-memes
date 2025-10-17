@@ -170,6 +170,26 @@ export class MemeProvider {
   }
 
   /**
+   * @description 根据会话的上下文（群组ID）和全局配置，计算并返回一个包含所有被禁用表情 key 的集合。
+   * @param {string} [guildId] - (可选) 当前会话的群组 ID。如果提供，将用于匹配特定群组的禁用规则。
+   * @returns {Set<string>} 一个包含所有在当前上下文中被禁用的表情 key 的集合，可用于快速过滤。
+   */
+  private getExclusionSet(guildId?: string): Set<string> {
+    const allBannedKeys: string[] = []
+    if (!this.config.blacklist || !this.config.blacklist.length) return new Set()
+
+    for (const rule of this.config.blacklist) {
+      if (!rule.guildId || rule.guildId === guildId) {
+        if (rule.keyId && typeof rule.keyId === 'string') {
+          const keys = rule.keyId.split(',').map(key => key.trim()).filter(Boolean)
+          allBannedKeys.push(...keys)
+        }
+      }
+    }
+    return new Set(allBannedKeys)
+  }
+
+  /**
    * 快速判断一个词是否可以触发表情制作。
    * 此方法仅操作本地缓存，不产生网络请求。
    * @param word - 要检查的单词 (key 或 keyword)。
@@ -184,12 +204,15 @@ export class MemeProvider {
    * 根据关键词查找对应的快捷指令。
    * 仅在 `cacheAllInfo` 模式下有效。
    * @param word - 要查找的快捷指令关键词。
+   * @param session - 当前 Koishi 会话，用于检查黑名单。
    * @returns 如果找到，则返回包含模板信息和快捷指令参数的对象，否则返回 null。
    */
-  public findShortcut(word: string): { meme: MemeInfo, shortcutArgs: string[] } | null {
+  public findShortcut(word: string, session?: Session): { meme: MemeInfo, shortcutArgs: string[] } | null {
     if (!this.config.cacheAllInfo) return null
+    const exclusionSet = this.getExclusionSet(session?.guildId)
 
     for (const meme of this.cache) {
+      if (exclusionSet.has(meme.key)) continue
       if (!meme.shortcuts) continue
       for (const sc of meme.shortcuts) {
         const shortcutKey = sc.pattern || (sc as any).key
@@ -220,68 +243,81 @@ export class MemeProvider {
    * - 缓存模式下：从内存中直接查找。
    * - 非缓存模式下：通过网络请求获取。
    * @param keyOrKeyword - 模板的 key 或关键词。
-   * @returns 返回找到的 MemeInfo 对象，如果找不到则返回 null。
+   * @param session - 当前 Koishi 会话，用于检查黑名单。
+   * @returns 返回找到的 MemeInfo 对象，如果找不到或被禁用则返回 null。
    */
-  async getInfo(keyOrKeyword: string): Promise<MemeInfo | null> {
-    if (this.config.cacheAllInfo) return (this.cache.find((t) => t.key === keyOrKeyword || t.keywords.includes(keyOrKeyword)) || null)
+  async getInfo(keyOrKeyword: string, session?: Session): Promise<MemeInfo | null> {
+    const exclusionSet = this.getExclusionSet(session?.guildId)
+    const findInCache = () => this.cache.find((t) => t.key === keyOrKeyword || t.keywords.includes(keyOrKeyword)) || null
 
-    let key = keyOrKeyword
-    if (!this.keys.includes(key)) {
-      if (this.isRsApi) {
-        const results = (await this.search(key)) as string[]
-        key = results[0]
-        if (!key) return null
-      } else {
+    let item: MemeInfo | null
+    if (this.config.cacheAllInfo) {
+      item = findInCache()
+    } else {
+      let key = keyOrKeyword
+      if (!this.keys.includes(key)) {
+        if (this.isRsApi) {
+          const results = await this.search(key, session) as string[]
+          key = results[0]
+          if (!key) return null
+        } else {
+          const found = findInCache()
+          if (!found) return null
+          key = found.key
+        }
+      }
+      if (exclusionSet.has(key)) return null
+
+      try {
+        if (this.isRsApi) {
+          const info = await this.ctx.http.get<any>(`${this.url}/memes/${key}/info`)
+          item = {
+            key: info.key,
+            keywords: info.keywords || [],
+            minImages: info.params.min_images,
+            maxImages: info.params.max_images,
+            minTexts: info.params.min_texts,
+            maxTexts: info.params.max_texts,
+            defaultTexts: info.params.default_texts || [],
+            args: (info.params.options || []).map((opt) => ({ ...opt })),
+            tags: info.tags || [],
+            shortcuts: info.shortcuts || [],
+            date_created: info.date_created,
+            date_modified: info.date_modified,
+          }
+        } else {
+          const data = await this.ctx.http.get<any>(`${this.url}/memes/${key}/info`)
+          const params = data.params_type
+          item = {
+            key: data.key,
+            keywords: data.keywords || [],
+            minImages: params.min_images,
+            maxImages: params.max_images,
+            minTexts: params.min_texts,
+            maxTexts: params.max_texts,
+            defaultTexts: params.default_texts || [],
+            args: Object.entries(params.args_type?.args_model?.properties || {}).filter(([k]) => k !== 'user_infos')
+              .map(([k, prop]: [string, any]) => ({
+                name: k,
+                type: prop.type,
+                default: prop.default,
+                description: prop.description,
+                choices: prop.enum || null,
+              })),
+            tags: data.tags || [],
+            shortcuts: data.shortcuts || [],
+            date_created: data.date_created,
+            date_modified: data.date_modified,
+          }
+        }
+      } catch (e) {
+        this.logger.warn(`获取模板 "${key}" 信息失败:`, e)
         return null
       }
     }
 
-    try {
-      if (this.isRsApi) {
-        const info = await this.ctx.http.get<any>(`${this.url}/memes/${key}/info`)
-        return {
-          key: info.key,
-          keywords: info.keywords || [],
-          minImages: info.params.min_images,
-          maxImages: info.params.max_images,
-          minTexts: info.params.min_texts,
-          maxTexts: info.params.max_texts,
-          defaultTexts: info.params.default_texts || [],
-          args: (info.params.options || []).map((opt) => ({ ...opt })),
-          tags: info.tags || [],
-          shortcuts: info.shortcuts || [],
-          date_created: info.date_created,
-          date_modified: info.date_modified,
-        }
-      } else {
-        const data = await this.ctx.http.get<any>(`${this.url}/memes/${key}/info`)
-        const params = data.params_type
-        return {
-          key: data.key,
-          keywords: data.keywords || [],
-          minImages: params.min_images,
-          maxImages: params.max_images,
-          minTexts: params.min_texts,
-          maxTexts: params.max_texts,
-          defaultTexts: params.default_texts || [],
-          args: Object.entries(params.args_type?.args_model?.properties || {}).filter(([k]) => k !== 'user_infos')
-            .map(([k, prop]: [string, any]) => ({
-              name: k,
-              type: prop.type,
-              default: prop.default,
-              description: prop.description,
-              choices: prop.enum || null,
-            })),
-          tags: data.tags || [],
-          shortcuts: data.shortcuts || [],
-          date_created: data.date_created,
-          date_modified: data.date_modified,
-        }
-      }
-    } catch (e) {
-      this.logger.warn(`获取模板 "${key}" 信息失败:`, e)
-      return null
-    }
+    if (!item || exclusionSet.has(item.key)) return null
+    return item
   }
 
   /**
@@ -289,11 +325,14 @@ export class MemeProvider {
    * - 缓存模式下：在本地进行带权重的模糊搜索。
    * - 非缓存模式下：依赖服务端的搜索接口或进行简单的 key 匹配。
    * @param query - 搜索关键词。
+   * @param session - 当前 Koishi 会话，用于过滤黑名单。
    * @returns 返回匹配的 key 数组或 MemeInfo 数组。
    */
-  async search(query: string): Promise<string[] | MemeInfo[]> {
+  async search(query: string, session?: Session): Promise<string[] | MemeInfo[]> {
+    const exclusionSet = this.getExclusionSet(session?.guildId)
+
     if (this.config.cacheAllInfo) {
-      return this.cache
+      const results = this.cache
         .map((item) => {
           let priority = 0
           if (item.key === query || item.keywords.includes(query)) priority = 5
@@ -302,31 +341,41 @@ export class MemeProvider {
           else if (item.tags?.some((t) => t.includes(query))) priority = 2
           return { item, priority }
         }).filter((p) => p.priority > 0).sort((a, b) => b.priority - a.priority).map((p) => p.item)
+      return results.filter(item => !exclusionSet.has(item.key))
     }
 
+    let results: string[]
     if (this.isRsApi) {
-      return this.ctx.http.get<string[]>(`${this.url}/meme/search`, { params: { query, include_tags: true } })
+      results = await this.ctx.http.get<string[]>(`${this.url}/meme/search`, { params: { query, include_tags: true } })
     } else {
-      return this.keys.filter((key) => key.includes(query))
+      results = this.keys.filter((key) => key.includes(query))
     }
+    return results.filter(key => !exclusionSet.has(key))
   }
 
   /**
    * 随机获取一个模板信息。
    * - 缓存模式下：从内存中随机选择。
    * - 非缓存模式下：随机选择一个 key 再通过网络请求获取。
+   * @param session - 当前 Koishi 会话，用于过滤黑名单。
    * @returns 返回找到的 MemeInfo 对象，如果找不到则返回 null。
    */
-  async getRandom(): Promise<MemeInfo | null> {
+  async getRandom(session?: Session): Promise<MemeInfo | null> {
+    const exclusionSet = this.getExclusionSet(session?.guildId)
+
     if (this.config.cacheAllInfo) {
       if (!this.cache.length) return null
-      const randomIndex = Math.floor(Math.random() * this.cache.length)
-      return this.cache[randomIndex]
+      const available = this.cache.filter(item => !exclusionSet.has(item.key))
+      if (!available.length) return null
+      const randomIndex = Math.floor(Math.random() * available.length)
+      return available[randomIndex]
     }
 
     if (!this.keys.length) return null
-    const randomKey = this.keys[Math.floor(Math.random() * this.keys.length)]
-    return this.getInfo(randomKey)
+    const available = this.keys.filter(key => !exclusionSet.has(key))
+    if (!available.length) return null
+    const randomKey = available[Math.floor(Math.random() * available.length)]
+    return this.getInfo(randomKey, session)
   }
 
   /**
@@ -350,17 +399,16 @@ export class MemeProvider {
 
   /**
    * 根据输入创建表情图片。
-   * @param keyOrKeyword - 模板的 key 或关键词。
+   * @param key - 模板的 key。
    * @param input - Koishi 的 h 元素数组，包含图片和文本。
    * @param session - 当前 Koishi 会话对象。
    * @returns 返回一个包含生成图片的 h 元素，或在失败时返回错误信息的字符串。
    * @throws {Error} 当参数不足时，抛出名为 'MissError' 的错误。
    */
-  async create(keyOrKeyword: string, input: h[], session: Session,): Promise<h | string> {
-    const item = await this.getInfo(keyOrKeyword)
-    if (!item) return `模板 "${keyOrKeyword}" 不存在`
+  async create(key: string, input: h[], session: Session,): Promise<h | string> {
+    const item = await this.getInfo(key, session)
+    if (!item) return `模板 "${key}" 不存在`
 
-    const key = item.key
     let imgs: string[] = []
     let texts: string[] = []
     const args: Record<string, any> = {}
@@ -375,10 +423,14 @@ export class MemeProvider {
           .split(/\s+/)
           .forEach((token) => {
             if (!token) return
-            const match = token.match(/^(-{1,2})([^=]+)=?(.*)$/)
-            match
-              ? (args[match[2]] = match[3] || true)
-              : texts.push(token)
+            const match = token.match(/^--([^=]+)(?:=(.*))?$/)
+            if (match) {
+              const key = match[1]
+              const value = match[2]
+              args[key] = value !== undefined ? value : true
+            } else {
+              texts.push(token)
+            }
           })
       }
     }
@@ -450,16 +502,47 @@ export class MemeProvider {
 
   /**
    * 调用后端 API 渲染模板列表图片。
+   * @param session - 当前 Koishi 会话，用于过滤黑名单。
    * @returns 返回包含图片的 Buffer 或错误信息字符串。
    */
-  async renderList(): Promise<Buffer | string> {
+  async renderList(session?: Session): Promise<Buffer | string> {
     try {
       if (this.isRsApi) {
-        const res = await this.ctx.http.post<{ image_id: string }>(`${this.url}/tools/render_list`, {})
+        const payload: any = {}
+        const meme_properties: Record<string, { new?: boolean, disabled?: boolean }> = {}
+
+        if (this.config.sortListBy) {
+          const [sortBy, sortDir] = this.config.sortListBy.split(/_(asc|desc)$/)
+          payload.sort_by = sortBy
+          payload.sort_reverse = sortDir === 'desc'
+        }
+
+        if (this.config.listTextTemplate) payload.text_template = this.config.listTextTemplate
+        if (this.config.showListIcon !== undefined && this.config.showListIcon !== null) payload.add_category_icon = this.config.showListIcon
+
+        if (this.config.cacheAllInfo && this.config.markAsNewDays > 0) {
+          const now = new Date()
+          const threshold = now.setDate(now.getDate() - this.config.markAsNewDays)
+          for (const meme of this.cache) {
+            const memeDate = Date.parse(meme.date_modified || meme.date_created)
+            if (memeDate > threshold) meme_properties[meme.key] = { ...meme_properties[meme.key], new: true }
+          }
+        }
+
+        const exclusionSet = this.getExclusionSet(session?.guildId)
+        for (const key of exclusionSet) meme_properties[key] = { ...meme_properties[key], disabled: true }
+        if (Object.keys(meme_properties).length > 0) payload.meme_properties = meme_properties
+
+        const res = await this.ctx.http.post<{ image_id: string }>(`${this.url}/tools/render_list`, payload)
         const buf = await this.ctx.http.get(`${this.url}/image/${res.image_id}`, { responseType: 'arraybuffer' })
         return Buffer.from(buf)
       } else {
-        const payload = { meme_list: this.keys.map((key) => ({ meme_key: key })) }
+        const exclusionSet = this.getExclusionSet(session?.guildId)
+        const availableKeys = this.keys.filter(key => !exclusionSet.has(key));
+        const payload: any = { meme_list: availableKeys.map((key) => ({ meme_key: key })) }
+        if (this.config.listTextTemplate) payload.text_template = this.config.listTextTemplate
+        if (this.config.showListIcon !== undefined && this.config.showListIcon !== null) payload.add_category_icon = this.config.showListIcon
+
         const buf = await this.ctx.http.post<ArrayBuffer>(`${this.url}/memes/render_list`, payload, { responseType: 'arraybuffer' })
         return Buffer.from(buf)
       }
