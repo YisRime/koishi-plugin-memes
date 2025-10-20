@@ -485,9 +485,10 @@ export class MemeProvider {
         const form = new FormData()
         texts.forEach((t) => form.append('texts', t))
         await Promise.all(
-          imgs.map(async (url) => {
+          imgs.map(async (url, index) => {
             const resp = await this.ctx.http.get<ArrayBuffer>(url, { responseType: 'arraybuffer' })
-            form.append('images', new Blob([resp]))
+            const filename = this.getFilenameFromUrl(url, `${index}.png`);
+            form.append('images', new File([resp], filename, { type: 'image/png' }));
           }),
         )
         if (Object.keys(args).length) form.append('args', JSON.stringify(args))
@@ -639,6 +640,22 @@ export class MemeProvider {
     const res = await this.ctx.http.post<{ image_id: string }>(`${this.url}/tools/image_operations/${endpoint}`, finalPayload)
     const finalBuf = await this.ctx.http.get<ArrayBuffer>(`${this.url}/image/${res.image_id}`, { responseType: 'arraybuffer' })
     return Buffer.from(finalBuf)
+  }
+
+  /**
+   * 从 URL 中智能提取或生成文件名。
+   * @param url - 图片的 URL。
+   * @param fallbackName - 当无法从 URL 中提取文件名时的备用名称。
+   * @returns 返回一个合理的文件名。
+   */
+  private getFilenameFromUrl(url: string, fallbackName: string): string {
+    try {
+      const parsedUrl = new URL(url)
+      const pathSegments = parsedUrl.pathname.split('/')
+      const lastSegment = pathSegments[pathSegments.length - 1]
+      if (lastSegment && lastSegment.includes('.')) return decodeURIComponent(lastSegment)
+    } catch (e) {}
+    return fallbackName
   }
 
   /**
