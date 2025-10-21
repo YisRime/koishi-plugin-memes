@@ -79,6 +79,7 @@ export class MemeProvider {
   private cache: MemeInfo[] = []
   private keys: string[] = []
   private logger: Logger
+  private config: Config
 
   /**
    * MemeProvider 构造函数。
@@ -86,7 +87,8 @@ export class MemeProvider {
    * @param url - 后端 API 的地址。
    * @param config - 插件的配置项。
    */
-  constructor(private ctx: Context, public url: string, private config: Config) {
+  constructor(private ctx: Context, public url: string, config: Config) {
+    this.config = config
     this.logger = ctx.logger('memes')
   }
 
@@ -96,7 +98,10 @@ export class MemeProvider {
    * @returns 返回一个包含版本号和模板总数的对象。
    */
   async start(): Promise<{ version: string; count: number }> {
-    const versionRaw = await this.ctx.http.get<string>(`${this.url}/meme/version`, { responseType: 'text' })
+    const endpoint = `${this.url}/meme/version`
+    if (this.config.debug) this.logger.info(`[REQUEST] GET ${endpoint}`)
+    const versionRaw = await this.ctx.http.get<string>(endpoint, { responseType: 'text' })
+    if (this.config.debug) this.logger.info(`[RESPONSE] Data: ${versionRaw}`)
     const version = versionRaw.replace(/"/g, '')
     this.isRsApi = !version.startsWith('0.1.')
     const count = await this.fetch()
@@ -112,7 +117,10 @@ export class MemeProvider {
   async fetch(): Promise<number> {
     if (this.config.cacheAllInfo) {
       if (this.isRsApi) {
-        const data = await this.ctx.http.get<any[]>(`${this.url}/meme/infos`)
+        const endpoint = `${this.url}/meme/infos`
+        if (this.config.debug) this.logger.info(`[REQUEST] GET ${endpoint}`)
+        const data = await this.ctx.http.get<any[]>(endpoint)
+        if (this.config.debug) this.logger.info(`[RESPONSE] Data length: ${data.length}`)
         this.cache = data.map((info) => ({
           key: info.key,
           keywords: info.keywords || [],
@@ -128,7 +136,10 @@ export class MemeProvider {
           date_modified: info.date_modified,
         }))
       } else {
-        const keys = await this.ctx.http.get<string[]>(`${this.url}/memes/keys`)
+        const keysEndpoint = `${this.url}/memes/keys`
+        if (this.config.debug) this.logger.info(`[REQUEST] GET ${keysEndpoint}`)
+        const keys = await this.ctx.http.get<string[]>(keysEndpoint)
+        if (this.config.debug) this.logger.info(`[RESPONSE] Keys count: ${keys.length}`)
         const results = await Promise.allSettled(keys.map((key) => this.ctx.http.get<any>(`${this.url}/memes/${key}/info`, { timeout: 30000 })))
         this.cache = results.filter((res): res is PromiseFulfilledResult<any> => res.status === 'fulfilled' && res.value)
           .map((res) => {
@@ -164,7 +175,9 @@ export class MemeProvider {
       const endpoint = this.isRsApi
         ? `${this.url}/meme/keys`
         : `${this.url}/memes/keys`
+      if (this.config.debug) this.logger.info(`[REQUEST] GET ${endpoint}`)
       this.keys = await this.ctx.http.get<string[]>(endpoint)
+      if (this.config.debug) this.logger.info(`[RESPONSE] Keys count: ${this.keys.length}`)
       return this.keys.length
     }
   }
@@ -270,7 +283,10 @@ export class MemeProvider {
 
       try {
         if (this.isRsApi) {
-          const info = await this.ctx.http.get<any>(`${this.url}/memes/${key}/info`)
+          const endpoint = `${this.url}/memes/${key}/info`
+          if (this.config.debug) this.logger.info(`[REQUEST] GET ${endpoint}`)
+          const info = await this.ctx.http.get<any>(endpoint)
+          if (this.config.debug) this.logger.info(`[RESPONSE] Data: ${JSON.stringify(info)}`)
           item = {
             key: info.key,
             keywords: info.keywords || [],
@@ -286,7 +302,10 @@ export class MemeProvider {
             date_modified: info.date_modified,
           }
         } else {
-          const data = await this.ctx.http.get<any>(`${this.url}/memes/${key}/info`)
+          const endpoint = `${this.url}/memes/${key}/info`
+          if (this.config.debug) this.logger.info(`[REQUEST] GET ${endpoint}`)
+          const data = await this.ctx.http.get<any>(endpoint)
+          if (this.config.debug) this.logger.info(`[RESPONSE] Data: ${JSON.stringify(data)}`)
           const params = data.params_type
           item = {
             key: data.key,
@@ -346,7 +365,11 @@ export class MemeProvider {
 
     let results: string[]
     if (this.isRsApi) {
-      results = await this.ctx.http.get<string[]>(`${this.url}/meme/search`, { params: { query, include_tags: true } })
+      const endpoint = `${this.url}/meme/search`
+      const params = { query, include_tags: true }
+      if (this.config.debug) this.logger.info(`[REQUEST] GET ${endpoint} with params: ${JSON.stringify(params)}`)
+      results = await this.ctx.http.get<string[]>(endpoint, { params })
+      if (this.config.debug) this.logger.info(`[RESPONSE] Data: ${JSON.stringify(results)}`)
     } else {
       results = this.keys.filter((key) => key.includes(query))
     }
@@ -387,10 +410,16 @@ export class MemeProvider {
     try {
       let previewUrl = `${this.url}/memes/${key}/preview`
       if (this.isRsApi) {
-        const { image_id } = await this.ctx.http.get<{ image_id: string }>(`${this.url}/memes/${key}/preview`)
+        const endpoint = `${this.url}/memes/${key}/preview`
+        if (this.config.debug) this.logger.info(`[REQUEST] GET ${endpoint}`)
+        const { image_id } = await this.ctx.http.get<{ image_id: string }>(endpoint)
+        if (this.config.debug) this.logger.info(`[RESPONSE] image_id: ${image_id}`)
         previewUrl = `${this.url}/image/${image_id}`
       }
-      return Buffer.from(await this.ctx.http.get<ArrayBuffer>(previewUrl, { responseType: 'arraybuffer' }))
+      if (this.config.debug) this.logger.info(`[REQUEST] GET ${previewUrl}`)
+      const buffer = Buffer.from(await this.ctx.http.get<ArrayBuffer>(previewUrl, { responseType: 'arraybuffer' }))
+      if (this.config.debug) this.logger.info(`[RESPONSE] Buffer size: ${buffer.length} bytes`)
+      return buffer
     } catch (e) {
       this.logger.warn(`预览图 "${key}" 获取失败:`, e)
       return `[预览图获取失败: ${e.message}]`
@@ -427,7 +456,15 @@ export class MemeProvider {
             if (match) {
               const key = match[1]
               const value = match[2]
-              args[key] = value !== undefined ? value : true
+              if (value !== undefined) {
+                if (value.trim() !== '' && !isNaN(Number(value))) {
+                  args[key] = Number(value)
+                } else {
+                  args[key] = value
+                }
+              } else {
+                args[key] = true
+              }
             } else {
               texts.push(token)
             }
@@ -478,21 +515,32 @@ export class MemeProvider {
         const imgBuffers = await Promise.all(imgs.map((url) => this.ctx.http.get<ArrayBuffer>(url, { responseType: 'arraybuffer' })),)
         const imgIds = await Promise.all(imgBuffers.map((buf) => this.upload(Buffer.from(buf))))
         const payload = { images: imgIds.map((id) => ({ id })), texts, options: args }
-        const res = await this.ctx.http.post<{ image_id: string }>(`${this.url}/memes/${key}`, payload, { timeout: 30000 })
-        const finalImg = await this.ctx.http.get<ArrayBuffer>(`${this.url}/image/${res.image_id}`, { responseType: 'arraybuffer' })
+        const endpoint = `${this.url}/memes/${key}`
+        if (this.config.debug) this.logger.info(`[REQUEST] POST ${endpoint} with payload: ${JSON.stringify(payload)}`)
+        const res = await this.ctx.http.post<{ image_id: string }>(endpoint, payload, { timeout: 30000 })
+        if (this.config.debug) this.logger.info(`[RESPONSE] image_id: ${res.image_id}`)
+        const imageEndpoint = `${this.url}/image/${res.image_id}`
+        if (this.config.debug) this.logger.info(`[REQUEST] GET ${imageEndpoint}`)
+        const finalImg = await this.ctx.http.get<ArrayBuffer>(imageEndpoint, { responseType: 'arraybuffer' })
+        if (this.config.debug) this.logger.info(`[RESPONSE] Buffer size: ${finalImg.byteLength} bytes`)
         return h.image(Buffer.from(finalImg), 'image/gif')
       } else {
         const form = new FormData()
         texts.forEach((t) => form.append('texts', t))
         await Promise.all(
-          imgs.map(async (url, index) => {
+          imgs.map(async (url) => {
             const resp = await this.ctx.http.get<ArrayBuffer>(url, { responseType: 'arraybuffer' })
-            const filename = this.getFilenameFromUrl(url, `${index}.png`);
-            form.append('images', new File([resp], filename, { type: 'image/png' }));
+            form.append('images', new Blob([resp]))
           }),
         )
         if (Object.keys(args).length) form.append('args', JSON.stringify(args))
-        const result = await this.ctx.http.post<ArrayBuffer>(`${this.url}/memes/${key}/`, form, { responseType: 'arraybuffer', timeout: 30000 })
+        const endpoint = `${this.url}/memes/${key}/`
+        if (this.config.debug) {
+            const formEntries = { texts, images_count: imgs.length, args }
+            this.logger.info(`[REQUEST] POST ${endpoint} with FormData: ${JSON.stringify(formEntries)}`)
+        }
+        const result = await this.ctx.http.post<ArrayBuffer>(endpoint, form, { responseType: 'arraybuffer', timeout: 30000 })
+        if (this.config.debug) this.logger.info(`[RESPONSE] Buffer size: ${result.byteLength} bytes`)
         return h.image(Buffer.from(result), 'image/gif')
       }
     } catch (e) {
@@ -534,8 +582,14 @@ export class MemeProvider {
         for (const key of exclusionSet) meme_properties[key] = { ...meme_properties[key], disabled: true }
         if (Object.keys(meme_properties).length > 0) payload.meme_properties = meme_properties
 
-        const res = await this.ctx.http.post<{ image_id: string }>(`${this.url}/tools/render_list`, payload)
-        const buf = await this.ctx.http.get(`${this.url}/image/${res.image_id}`, { responseType: 'arraybuffer' })
+        const endpoint = `${this.url}/tools/render_list`
+        if (this.config.debug) this.logger.info(`[REQUEST] POST ${endpoint} with payload: ${JSON.stringify(payload)}`)
+        const res = await this.ctx.http.post<{ image_id: string }>(endpoint, payload)
+        if (this.config.debug) this.logger.info(`[RESPONSE] image_id: ${res.image_id}`)
+        const imageEndpoint = `${this.url}/image/${res.image_id}`
+        if (this.config.debug) this.logger.info(`[REQUEST] GET ${imageEndpoint}`)
+        const buf = await this.ctx.http.get(imageEndpoint, { responseType: 'arraybuffer' })
+        if (this.config.debug) this.logger.info(`[RESPONSE] Buffer size: ${buf.byteLength} bytes`)
         return Buffer.from(buf)
       } else {
         const exclusionSet = this.getExclusionSet(session?.guildId)
@@ -544,7 +598,14 @@ export class MemeProvider {
         if (this.config.listTextTemplate) payload.text_template = this.config.listTextTemplate
         if (this.config.showListIcon !== undefined && this.config.showListIcon !== null) payload.add_category_icon = this.config.showListIcon
 
-        const buf = await this.ctx.http.post<ArrayBuffer>(`${this.url}/memes/render_list`, payload, { responseType: 'arraybuffer' })
+        const endpoint = `${this.url}/memes/render_list`
+        if (this.config.debug) {
+            const loggedPayload = { ...payload, meme_list_count: payload.meme_list.length };
+            delete loggedPayload.meme_list;
+            this.logger.info(`[REQUEST] POST ${endpoint} with payload: ${JSON.stringify(loggedPayload)}`);
+        }
+        const buf = await this.ctx.http.post<ArrayBuffer>(endpoint, payload, { responseType: 'arraybuffer' })
+        if (this.config.debug) this.logger.info(`[RESPONSE] Buffer size: ${buf.byteLength} bytes`)
         return Buffer.from(buf)
       }
     } catch (e) {
@@ -563,8 +624,14 @@ export class MemeProvider {
   async renderStatistics(title: string, type: string, data: [string, number][],): Promise<Buffer | string> {
     try {
       const payload = { title, statistics_type: type, data }
-      const res = await this.ctx.http.post<{ image_id: string }>(`${this.url}/tools/render_statistics`, payload)
-      const buf = await this.ctx.http.get<Buffer>(`${this.url}/image/${res.image_id}`, { responseType: 'arraybuffer' })
+      const endpoint = `${this.url}/tools/render_statistics`
+      if (this.config.debug) this.logger.info(`[REQUEST] POST ${endpoint} with payload: ${JSON.stringify(payload)}`)
+      const res = await this.ctx.http.post<{ image_id: string }>(endpoint, payload)
+      if (this.config.debug) this.logger.info(`[RESPONSE] image_id: ${res.image_id}`)
+      const imageEndpoint = `${this.url}/image/${res.image_id}`
+      if (this.config.debug) this.logger.info(`[REQUEST] GET ${imageEndpoint}`)
+      const buf = await this.ctx.http.get<Buffer>(imageEndpoint, { responseType: 'arraybuffer' })
+      if (this.config.debug) this.logger.info(`[RESPONSE] Buffer size: ${buf.byteLength} bytes`)
       return Buffer.from(buf)
     } catch (e) {
       this.logger.warn('统计图渲染失败:', e)
@@ -584,9 +651,12 @@ export class MemeProvider {
       const buf = await this.ctx.http.get<ArrayBuffer>(imageUrl, { responseType: 'arraybuffer' })
       const image_id = await this.upload(Buffer.from(buf))
       const finalPayload = { ...payload, image_id }
+      const apiEndpoint = `${this.url}/tools/image_operations/${endpoint}`
+      if (this.config.debug) this.logger.info(`[REQUEST] POST ${apiEndpoint} with payload: ${JSON.stringify(finalPayload)}`)
 
       if (endpoint === 'inspect') {
-        const info = await this.ctx.http.post<any>(`${this.url}/tools/image_operations/inspect`, finalPayload)
+        const info = await this.ctx.http.post<any>(apiEndpoint, finalPayload)
+        if (this.config.debug) this.logger.info(`[RESPONSE] Data: ${JSON.stringify(info)}`)
         let result = `图片信息:\n- 尺寸: ${info.width}x${info.height}`
         result += info.is_multi_frame
           ? `\n- 类型: GIF (${info.frame_count} 帧)`
@@ -595,14 +665,19 @@ export class MemeProvider {
       }
 
       if (endpoint === 'gif_split') {
-        const res = await this.ctx.http.post<{ image_ids: string[] }>(`${this.url}/tools/image_operations/gif_split`, finalPayload)
+        const res = await this.ctx.http.post<{ image_ids: string[] }>(apiEndpoint, finalPayload)
+        if (this.config.debug) this.logger.info(`[RESPONSE] image_ids: ${JSON.stringify(res.image_ids)}`)
         if (!res.image_ids?.length) return 'GIF 分解失败'
         const mergedBuffer = await this.performMerge(res.image_ids, 'merge_horizontal', {})
         return h('message', `GIF (${res.image_ids.length}帧)分解成功`, h.image(mergedBuffer, 'image/png'))
       }
 
-      const res = await this.ctx.http.post<{ image_id: string }>(`${this.url}/tools/image_operations/${endpoint}`, finalPayload)
-      const finalBuf = await this.ctx.http.get<ArrayBuffer>(`${this.url}/image/${res.image_id}`, { responseType: 'arraybuffer' })
+      const res = await this.ctx.http.post<{ image_id: string }>(apiEndpoint, finalPayload)
+      if (this.config.debug) this.logger.info(`[RESPONSE] image_id: ${res.image_id}`)
+      const imageEndpoint = `${this.url}/image/${res.image_id}`
+      if (this.config.debug) this.logger.info(`[REQUEST] GET ${imageEndpoint}`)
+      const finalBuf = await this.ctx.http.get<ArrayBuffer>(imageEndpoint, { responseType: 'arraybuffer' })
+      if (this.config.debug) this.logger.info(`[RESPONSE] Buffer size: ${finalBuf.byteLength} bytes`)
       return h.image(Buffer.from(finalBuf), 'image/png')
     } catch (e) {
       this.logger.warn(`图片 "${endpoint}" 处理失败:`, e)
@@ -637,25 +712,15 @@ export class MemeProvider {
    */
   private async performMerge(image_ids: string[], endpoint: string, payload: any): Promise<Buffer> {
     const finalPayload = { ...payload, image_ids }
-    const res = await this.ctx.http.post<{ image_id: string }>(`${this.url}/tools/image_operations/${endpoint}`, finalPayload)
-    const finalBuf = await this.ctx.http.get<ArrayBuffer>(`${this.url}/image/${res.image_id}`, { responseType: 'arraybuffer' })
+    const apiEndpoint = `${this.url}/tools/image_operations/${endpoint}`
+    if (this.config.debug) this.logger.info(`[REQUEST] POST ${apiEndpoint} with payload: ${JSON.stringify(finalPayload)}`)
+    const res = await this.ctx.http.post<{ image_id: string }>(apiEndpoint, finalPayload)
+    if (this.config.debug) this.logger.info(`[RESPONSE] image_id: ${res.image_id}`)
+    const imageEndpoint = `${this.url}/image/${res.image_id}`
+    if (this.config.debug) this.logger.info(`[REQUEST] GET ${imageEndpoint}`)
+    const finalBuf = await this.ctx.http.get<ArrayBuffer>(imageEndpoint, { responseType: 'arraybuffer' })
+    if (this.config.debug) this.logger.info(`[RESPONSE] Buffer size: ${finalBuf.byteLength} bytes`)
     return Buffer.from(finalBuf)
-  }
-
-  /**
-   * 从 URL 中智能提取或生成文件名。
-   * @param url - 图片的 URL。
-   * @param fallbackName - 当无法从 URL 中提取文件名时的备用名称。
-   * @returns 返回一个合理的文件名。
-   */
-  private getFilenameFromUrl(url: string, fallbackName: string): string {
-    try {
-      const parsedUrl = new URL(url)
-      const pathSegments = parsedUrl.pathname.split('/')
-      const lastSegment = pathSegments[pathSegments.length - 1]
-      if (lastSegment && lastSegment.includes('.')) return decodeURIComponent(lastSegment)
-    } catch (e) {}
-    return fallbackName
   }
 
   /**
@@ -665,7 +730,10 @@ export class MemeProvider {
    */
   private async upload(buf: Buffer): Promise<string> {
     const payload = { type: 'data', data: buf.toString('base64') }
-    const { image_id } = await this.ctx.http.post<{ image_id: string }>(`${this.url}/image/upload`, payload)
+    const endpoint = `${this.url}/image/upload`
+    if (this.config.debug) this.logger.info(`[REQUEST] POST ${endpoint} with payload: { type: 'data', data: 'base64_string(${buf.length} bytes)' }`)
+    const { image_id } = await this.ctx.http.post<{ image_id: string }>(endpoint, payload)
+    if (this.config.debug) this.logger.info(`[RESPONSE] image_id: ${image_id}`)
     return image_id
   }
 }

@@ -27,6 +27,7 @@
 | --- | --- | --- | --- |
 | `apiUrl` | `string` | `http://127.0.0.1:2233` | 后端 API 服务地址。 |
 | `cacheAllInfo` | `boolean` | `true` | 是否在启动时缓存所有模板的详细信息，可加快后续响应速度。 |
+| `debug` | `boolean` | `false` | 是否显示调试信息。 |
 
 ### 参数配置
 

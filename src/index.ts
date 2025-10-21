@@ -23,6 +23,7 @@ export const usage = `
 export interface Config {
   apiUrl: string
   cacheAllInfo: boolean
+  debug: boolean
   useUserAvatar: boolean
   fillDefaultText: 'disable' | 'missing' | 'insufficient'
   ignoreExcess: boolean
@@ -42,6 +43,7 @@ export const Config: Schema<Config> = Schema.intersect([
   Schema.object({
     apiUrl: Schema.string().description('后端 API 地址').default('http://127.0.0.1:2233'),
     cacheAllInfo: Schema.boolean().description('缓存详细信息').default(true),
+    debug: Schema.boolean().description('显示调试信息').default(false),
   }).description('基础配置'),
   Schema.object({
     useUserAvatar: Schema.boolean().description('自动补充用户头像').default(true),
