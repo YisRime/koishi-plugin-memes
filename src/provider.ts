@@ -113,28 +113,34 @@ export class MemeProvider {
    */
   private parseNonRsInfo(data: any): MemeInfo {
     const params = data.params_type;
+    const argsModelProps = params.args_type?.args_model?.properties || {};
     const memeArgs: MemeOption[] = (params.args_type?.parser_options || [])
-      .flatMap(option => (option.args || []).map(arg => ({
-        name: arg.name,
-        type: 'string',
-        default: arg.default,
-        description: option.help_text || null,
-        choices: null,
-        parser_flags: null,
-      })))
+      .map(option => {
+        const dest = option.dest;
+        if (!dest || dest === 'user_infos') return null;
+        const modelProp = argsModelProps[dest];
+        if (!modelProp) return null;
+        const mainArgName = option.args?.[0]?.name || dest;
+        return {
+          name: mainArgName,
+          type: modelProp.type || 'string',
+          default: modelProp.default,
+          description: option.help_text || modelProp.description || null,
+          choices: modelProp.enum || null,
+          parser_flags: null,
+        };
+      })
       .filter(Boolean);
 
     const shortcuts: MemeShortcut[] = (data.shortcuts || []).map(sc => {
       const texts: string[] = [];
       const options: Record<string, any> = {};
       const args: string[] = sc.args || [];
-
       for (let i = 0; i < args.length; i++) {
         const current = args[i];
         if (current.startsWith('--')) {
           const key = current.substring(2);
           const next = args[i + 1];
-
           if (next && !next.startsWith('--')) {
             if (!isNaN(Number(next))) {
               options[key] = Number(next);
@@ -149,7 +155,6 @@ export class MemeProvider {
           texts.push(current);
         }
       }
-
       return {
         pattern: sc.key,
         humanized: sc.humanized || null,

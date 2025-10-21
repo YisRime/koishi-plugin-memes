@@ -197,7 +197,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
         for (const arg of item.args) {
           let line = `  - ${arg.name} (${arg.type || 'any'})`
           const details: string[] = []
-          if (arg.default !== undefined && arg.default !== null && arg.default !== '') details.push(`[${JSON.stringify(arg.default).replace(/"/g, '')}]`)
+          if (arg.default !== undefined && arg.default !== null) details.push(`[${JSON.stringify(arg.default).replace(/"/g, '')}]`)
           if (arg.choices?.length) details.push(`[${arg.choices.join(',')}]`)
           let details_str = details.join(' ')
           if (details_str) line += ` ${details_str}`
