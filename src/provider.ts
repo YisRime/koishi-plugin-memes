@@ -123,12 +123,41 @@ export class MemeProvider {
         parser_flags: null,
       })))
       .filter(Boolean);
-    const shortcuts: MemeShortcut[] = (data.shortcuts || []).map(sc => ({
-      pattern: sc.key,
-      humanized: sc.humanized || null,
-      texts: sc.args || [],
-      options: {},
-    }));
+
+    const shortcuts: MemeShortcut[] = (data.shortcuts || []).map(sc => {
+      const texts: string[] = [];
+      const options: Record<string, any> = {};
+      const args: string[] = sc.args || [];
+
+      for (let i = 0; i < args.length; i++) {
+        const current = args[i];
+        if (current.startsWith('--')) {
+          const key = current.substring(2);
+          const next = args[i + 1];
+
+          if (next && !next.startsWith('--')) {
+            if (!isNaN(Number(next))) {
+              options[key] = Number(next);
+            } else {
+              options[key] = next;
+            }
+            i++;
+          } else {
+            options[key] = true;
+          }
+        } else {
+          texts.push(current);
+        }
+      }
+
+      return {
+        pattern: sc.key,
+        humanized: sc.humanized || null,
+        texts: texts,
+        options: options,
+      };
+    });
+
     return {
       key: data.key,
       keywords: data.keywords || [],

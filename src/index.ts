@@ -113,7 +113,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       return h.image(result, 'image/png')
     })
 
-  cmd.subcommand('.make <keyOrKeyword:string>[params:elements]', '表情生成')
+  cmd.subcommand('.make <keyOrKeyword:string> [params:elements]', '表情生成')
     .usage('根据模板名称或关键词制作表情')
     .action(async ({ session }, keyOrKeyword, input) => {
       if (!keyOrKeyword) return '请输入关键词'
@@ -209,15 +209,14 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
         output.push('快捷指令:')
         const shortcuts_list: string[] = []
         for (const sc of item.shortcuts) {
-          const key = (sc as any).humanized || sc.pattern || (sc as any).key
-          let shortcutInfo = key
-          const options = (sc as any).options
-          if (options && Object.keys(options).length > 0) {
-            const opts = Object.entries(options).map(([k, v]) => `${k}=${v}`).join(',')
+          const displayName = sc.humanized || sc.pattern;
+          let shortcutInfo = displayName;
+
+          if (sc.options && Object.keys(sc.options).length > 0) {
+            const opts = Object.entries(sc.options).map(([k, v]) => `${k}=${v}`).join(',')
             shortcutInfo += `(${opts})`
-          } else {
-            const args = (sc as any).args || sc.texts
-            if (args && args.length > 0) shortcutInfo += `(${args.join(' ')})`
+          } else if (sc.texts && sc.texts.length > 0) {
+            shortcutInfo += `(${sc.texts.join(' ')})`
           }
           shortcuts_list.push(shortcutInfo)
         }
