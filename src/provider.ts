@@ -113,23 +113,15 @@ export class MemeProvider {
    */
   private parseNonRsInfo(data: any): MemeInfo {
     const params = data.params_type;
-    const argsModelProps = params.args_type?.args_model?.properties || {};
     const memeArgs: MemeOption[] = (params.args_type?.parser_options || [])
-      .map(option => {
-        const dest = option.dest;
-        if (!dest || dest === 'user_infos') return null;
-        const modelProp = argsModelProps[dest];
-        if (!modelProp) return null;
-        const mainArgName = option.args?.[0]?.name || dest;
-        return {
-          name: mainArgName,
-          type: modelProp.type || 'string',
-          default: modelProp.default,
-          description: option.help_text || modelProp.description || null,
-          choices: modelProp.enum || null,
-          parser_flags: null,
-        };
-      })
+      .flatMap(option => (option.args || []).map(arg => ({
+        name: arg.name,
+        type: 'string',
+        default: arg.default,
+        description: option.help_text || null,
+        choices: null,
+        parser_flags: null,
+      })))
       .filter(Boolean);
 
     const shortcuts: MemeShortcut[] = (data.shortcuts || []).map(sc => {
@@ -190,7 +182,7 @@ export class MemeProvider {
       const endpoint = `${this.url}/meme/infos`
       if (this.config.debug) this.logger.info(`[REQUEST] GET ${endpoint}`)
       const data = await this.ctx.http.get<any[]>(endpoint)
-      if (this.config.debug) this.logger.info(`[RESPONSE] Data length: ${data.length}`)
+      if (this.config.debug) this.logger.info(`[RESPONSE] ${JSON.stringify(data)}`)
       this.cache = data.map((info) => ({
         key: info.key,
         keywords: info.keywords || [],
@@ -211,7 +203,7 @@ export class MemeProvider {
     const keysEndpoint = this.isRsApi ? `${this.url}/meme/keys` : `${this.url}/memes/keys`
     if (this.config.debug) this.logger.info(`[REQUEST] GET ${keysEndpoint}`)
     const keys = await this.ctx.http.get<string[]>(keysEndpoint)
-    if (this.config.debug) this.logger.info(`[RESPONSE] Keys count: ${keys.length}`)
+    if (this.config.debug) this.logger.info(`[RESPONSE] ${JSON.stringify(keys)}`)
     this.keys = keys
     if (this.config.cacheAllInfo && !this.isRsApi) {
       (async () => {
@@ -220,7 +212,12 @@ export class MemeProvider {
         for (let i = 0; i < keys.length; i += batchSize) {
           const batch = keys.slice(i, i + batchSize)
           const results = await Promise.allSettled(batch.map((key) => this.ctx.http.get<any>(`${this.url}/memes/${key}/info`, { timeout: 30000 })))
-          results.forEach((res) => { if (res.status === 'fulfilled' && res.value) tempCache.push(this.parseNonRsInfo(res.value)) })
+          results.forEach((res) => {
+            if (res.status === 'fulfilled' && res.value) {
+              if (this.config.debug) this.logger.info(`[RESPONSE] ${JSON.stringify(res.value)}`)
+              tempCache.push(this.parseNonRsInfo(res.value))
+            }
+          })
         }
         this.cache = tempCache
         this.keys = this.cache.map((item) => item.key)
@@ -435,9 +432,9 @@ export class MemeProvider {
       if (this.isRsApi) {
         const endpoint = `${this.url}/memes/${key}/preview`
         if (this.config.debug) this.logger.info(`[REQUEST] GET ${endpoint}`)
-        const { image_id } = await this.ctx.http.get<{ image_id: string }>(endpoint)
-        if (this.config.debug) this.logger.info(`[RESPONSE] image_id: ${image_id}`)
-        previewUrl = `${this.url}/image/${image_id}`
+        const response = await this.ctx.http.get<{ image_id: string }>(endpoint)
+        if (this.config.debug) this.logger.info(`[RESPONSE] ${JSON.stringify(response)}`)
+        previewUrl = `${this.url}/image/${response.image_id}`
       }
       if (this.config.debug) this.logger.info(`[REQUEST] GET ${previewUrl}`)
       const buffer = Buffer.from(await this.ctx.http.get<ArrayBuffer>(previewUrl, { responseType: 'arraybuffer' }))
@@ -541,7 +538,7 @@ export class MemeProvider {
         const endpoint = `${this.url}/memes/${key}/make`
         if (this.config.debug) this.logger.info(`[REQUEST] POST ${endpoint} with payload: ${JSON.stringify(payload)}`)
         const res = await this.ctx.http.post<{ image_id: string }>(endpoint, payload, { timeout: 30000 })
-        if (this.config.debug) this.logger.info(`[RESPONSE] image_id: ${res.image_id}`)
+        if (this.config.debug) this.logger.info(`[RESPONSE] ${JSON.stringify(res)}`)
         const imageEndpoint = `${this.url}/image/${res.image_id}`
         if (this.config.debug) this.logger.info(`[REQUEST] GET ${imageEndpoint}`)
         const finalImg = await this.ctx.http.get<ArrayBuffer>(imageEndpoint, { responseType: 'arraybuffer' })
@@ -604,7 +601,7 @@ export class MemeProvider {
         const endpoint = `${this.url}/tools/render_list`
         if (this.config.debug) this.logger.info(`[REQUEST] POST ${endpoint} with payload: ${JSON.stringify(payload)}`)
         const res = await this.ctx.http.post<{ image_id: string }>(endpoint, payload)
-        if (this.config.debug) this.logger.info(`[RESPONSE] image_id: ${res.image_id}`)
+        if (this.config.debug) this.logger.info(`[RESPONSE] ${JSON.stringify(res)}`)
         const imageEndpoint = `${this.url}/image/${res.image_id}`
         if (this.config.debug) this.logger.info(`[REQUEST] GET ${imageEndpoint}`)
         const buf = await this.ctx.http.get(imageEndpoint, { responseType: 'arraybuffer' })
@@ -646,7 +643,7 @@ export class MemeProvider {
       const endpoint = `${this.url}/tools/render_statistics`
       if (this.config.debug) this.logger.info(`[REQUEST] POST ${endpoint} with payload: ${JSON.stringify(payload)}`)
       const res = await this.ctx.http.post<{ image_id: string }>(endpoint, payload)
-      if (this.config.debug) this.logger.info(`[RESPONSE] image_id: ${res.image_id}`)
+      if (this.config.debug) this.logger.info(`[RESPONSE] ${JSON.stringify(res)}`)
       const imageEndpoint = `${this.url}/image/${res.image_id}`
       if (this.config.debug) this.logger.info(`[REQUEST] GET ${imageEndpoint}`)
       const buf = await this.ctx.http.get<Buffer>(imageEndpoint, { responseType: 'arraybuffer' })
@@ -685,14 +682,14 @@ export class MemeProvider {
 
       if (endpoint === 'gif_split') {
         const res = await this.ctx.http.post<{ image_ids: string[] }>(apiEndpoint, finalPayload)
-        if (this.config.debug) this.logger.info(`[RESPONSE] image_ids: ${JSON.stringify(res.image_ids)}`)
+        if (this.config.debug) this.logger.info(`[RESPONSE] ${JSON.stringify(res)}`)
         if (!res.image_ids?.length) return 'GIF 分解失败'
         const mergedBuffer = await this.performMerge(res.image_ids, 'merge_horizontal', {})
         return h('message', `GIF (${res.image_ids.length}帧)分解成功`, h.image(mergedBuffer, 'image/png'))
       }
 
       const res = await this.ctx.http.post<{ image_id: string }>(apiEndpoint, finalPayload)
-      if (this.config.debug) this.logger.info(`[RESPONSE] image_id: ${res.image_id}`)
+      if (this.config.debug) this.logger.info(`[RESPONSE] ${JSON.stringify(res)}`)
       const imageEndpoint = `${this.url}/image/${res.image_id}`
       if (this.config.debug) this.logger.info(`[REQUEST] GET ${imageEndpoint}`)
       const finalBuf = await this.ctx.http.get<ArrayBuffer>(imageEndpoint, { responseType: 'arraybuffer' })
@@ -734,7 +731,7 @@ export class MemeProvider {
     const apiEndpoint = `${this.url}/tools/image_operations/${endpoint}`
     if (this.config.debug) this.logger.info(`[REQUEST] POST ${apiEndpoint} with payload: ${JSON.stringify(finalPayload)}`)
     const res = await this.ctx.http.post<{ image_id: string }>(apiEndpoint, finalPayload)
-    if (this.config.debug) this.logger.info(`[RESPONSE] image_id: ${res.image_id}`)
+    if (this.config.debug) this.logger.info(`[RESPONSE] ${JSON.stringify(res)}`)
     const imageEndpoint = `${this.url}/image/${res.image_id}`
     if (this.config.debug) this.logger.info(`[REQUEST] GET ${imageEndpoint}`)
     const finalBuf = await this.ctx.http.get<ArrayBuffer>(imageEndpoint, { responseType: 'arraybuffer' })
@@ -751,8 +748,8 @@ export class MemeProvider {
     const payload = { type: 'data', data: buf.toString('base64') }
     const endpoint = `${this.url}/image/upload`
     if (this.config.debug) this.logger.info(`[REQUEST] POST ${endpoint} with payload: { type: 'data', data: 'base64_string(${buf.length} bytes)' }`)
-    const { image_id } = await this.ctx.http.post<{ image_id: string }>(endpoint, payload)
-    if (this.config.debug) this.logger.info(`[RESPONSE] image_id: ${image_id}`)
-    return image_id
+    const response = await this.ctx.http.post<{ image_id: string }>(endpoint, payload)
+    if (this.config.debug) this.logger.info(`[RESPONSE] ${JSON.stringify(response)}`)
+    return response.image_id
   }
 }
