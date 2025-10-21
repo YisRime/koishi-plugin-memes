@@ -61,12 +61,8 @@ export interface MemeInfo {
  * @returns 返回一个包含头像 URL 的 Promise。
  */
 async function getAvatar(session: Session, userId?: string): Promise<string> {
-  const targetId = userId || session.userId
-  try {
-    const user = await session.bot.getUser(targetId)
-    if (user.avatar) return user.avatar
-  } catch {}
-  return `https://q1.qlogo.cn/g?b=qq&nk=${targetId}&s=640`
+  const user = await session.bot.getUser(userId || session.userId)
+  if (user.avatar) return user.avatar
 }
 
 /**
@@ -109,77 +105,84 @@ export class MemeProvider {
   }
 
   /**
+   * 将非 rs API 返回的原始模板信息解析为标准 MemeInfo 格式。
+   * @param data - 从 API 获取的原始数据对象。
+   * @returns 标准化的 MemeInfo 对象。
+   */
+  private parseNonRsInfo(data: any): MemeInfo {
+    const params = data.params_type;
+    return {
+      key: data.key,
+      keywords: data.keywords || [],
+      minImages: params.min_images,
+      maxImages: params.max_images,
+      minTexts: params.min_texts,
+      maxTexts: params.max_texts,
+      defaultTexts: params.default_texts || [],
+      args: Object.entries(params.args_type?.args_model?.properties || {})
+        .filter(([key]) => key !== 'user_infos')
+        .map(([key, prop]: [string, any]) => ({
+          name: key,
+          type: prop.type,
+          default: prop.default,
+          description: prop.description,
+          choices: prop.enum || null,
+        })),
+      tags: data.tags || [],
+      shortcuts: data.shortcuts || [],
+      date_created: data.date_created,
+      date_modified: data.date_modified,
+    };
+  }
+
+  /**
    * 根据配置从后端 API 拉取数据。
    * 如果 `cacheAllInfo` 为 true，则缓存所有模板的详细信息；
    * 否则，仅缓存模板的 key 列表。
    * @returns 返回获取到的模板总数。
    */
   async fetch(): Promise<number> {
-    if (this.config.cacheAllInfo) {
-      if (this.isRsApi) {
-        const endpoint = `${this.url}/meme/infos`
-        if (this.config.debug) this.logger.info(`[REQUEST] GET ${endpoint}`)
-        const data = await this.ctx.http.get<any[]>(endpoint)
-        if (this.config.debug) this.logger.info(`[RESPONSE] Data length: ${data.length}`)
-        this.cache = data.map((info) => ({
-          key: info.key,
-          keywords: info.keywords || [],
-          minImages: info.params.min_images,
-          maxImages: info.params.max_images,
-          minTexts: info.params.min_texts,
-          maxTexts: info.params.max_texts,
-          defaultTexts: info.params.default_texts || [],
-          args: (info.params.options || []).map((opt) => ({ ...opt })),
-          tags: info.tags || [],
-          shortcuts: info.shortcuts || [],
-          date_created: info.date_created,
-          date_modified: info.date_modified,
-        }))
-      } else {
-        const keysEndpoint = `${this.url}/memes/keys`
-        if (this.config.debug) this.logger.info(`[REQUEST] GET ${keysEndpoint}`)
-        const keys = await this.ctx.http.get<string[]>(keysEndpoint)
-        if (this.config.debug) this.logger.info(`[RESPONSE] Keys count: ${keys.length}`)
-        const results = await Promise.allSettled(keys.map((key) => this.ctx.http.get<any>(`${this.url}/memes/${key}/info`, { timeout: 30000 })))
-        this.cache = results.filter((res): res is PromiseFulfilledResult<any> => res.status === 'fulfilled' && res.value)
-          .map((res) => {
-            const data = res.value
-            const params = data.params_type
-            return {
-              key: data.key,
-              keywords: data.keywords || [],
-              minImages: params.min_images,
-              maxImages: params.max_images,
-              minTexts: params.min_texts,
-              maxTexts: params.max_texts,
-              defaultTexts: params.default_texts || [],
-              args: Object.entries(params.args_type?.args_model?.properties || {})
-                .filter(([key]) => key !== 'user_infos')
-                .map(([key, prop]: [string, any]) => ({
-                  name: key,
-                  type: prop.type,
-                  default: prop.default,
-                  description: prop.description,
-                  choices: prop.enum || null,
-                })),
-              tags: data.tags || [],
-              shortcuts: data.shortcuts || [],
-              date_created: data.date_created,
-              date_modified: data.date_modified,
-            }
-          })
-      }
+    if (this.config.cacheAllInfo && this.isRsApi) {
+      const endpoint = `${this.url}/meme/infos`
+      if (this.config.debug) this.logger.info(`[REQUEST] GET ${endpoint}`)
+      const data = await this.ctx.http.get<any[]>(endpoint)
+      if (this.config.debug) this.logger.info(`[RESPONSE] Data length: ${data.length}`)
+      this.cache = data.map((info) => ({
+        key: info.key,
+        keywords: info.keywords || [],
+        minImages: info.params.min_images,
+        maxImages: info.params.max_images,
+        minTexts: info.params.min_texts,
+        maxTexts: info.params.max_texts,
+        defaultTexts: info.params.default_texts || [],
+        args: (info.params.options || []).map((opt) => ({ ...opt })),
+        tags: info.tags || [],
+        shortcuts: info.shortcuts || [],
+        date_created: info.date_created,
+        date_modified: info.date_modified,
+      }))
       this.keys = this.cache.map((item) => item.key)
       return this.cache.length
-    } else {
-      const endpoint = this.isRsApi
-        ? `${this.url}/meme/keys`
-        : `${this.url}/memes/keys`
-      if (this.config.debug) this.logger.info(`[REQUEST] GET ${endpoint}`)
-      this.keys = await this.ctx.http.get<string[]>(endpoint)
-      if (this.config.debug) this.logger.info(`[RESPONSE] Keys count: ${this.keys.length}`)
-      return this.keys.length
     }
+    const keysEndpoint = this.isRsApi ? `${this.url}/meme/keys` : `${this.url}/memes/keys`
+    if (this.config.debug) this.logger.info(`[REQUEST] GET ${keysEndpoint}`)
+    const keys = await this.ctx.http.get<string[]>(keysEndpoint)
+    if (this.config.debug) this.logger.info(`[RESPONSE] Keys count: ${keys.length}`)
+    this.keys = keys
+    if (this.config.cacheAllInfo && !this.isRsApi) {
+      (async () => {
+        const batchSize = 10
+        const tempCache: MemeInfo[] = []
+        for (let i = 0; i < keys.length; i += batchSize) {
+          const batch = keys.slice(i, i + batchSize)
+          const results = await Promise.allSettled(batch.map((key) => this.ctx.http.get<any>(`${this.url}/memes/${key}/info`, { timeout: 30000 })))
+          results.forEach((res) => { if (res.status === 'fulfilled' && res.value) tempCache.push(this.parseNonRsInfo(res.value)) })
+        }
+        this.cache = tempCache
+        this.keys = this.cache.map((item) => item.key)
+      })()
+    }
+    return keys.length
   }
 
   /**
@@ -306,28 +309,7 @@ export class MemeProvider {
           if (this.config.debug) this.logger.info(`[REQUEST] GET ${endpoint}`)
           const data = await this.ctx.http.get<any>(endpoint)
           if (this.config.debug) this.logger.info(`[RESPONSE] Data: ${JSON.stringify(data)}`)
-          const params = data.params_type
-          item = {
-            key: data.key,
-            keywords: data.keywords || [],
-            minImages: params.min_images,
-            maxImages: params.max_images,
-            minTexts: params.min_texts,
-            maxTexts: params.max_texts,
-            defaultTexts: params.default_texts || [],
-            args: Object.entries(params.args_type?.args_model?.properties || {}).filter(([k]) => k !== 'user_infos')
-              .map(([k, prop]: [string, any]) => ({
-                name: k,
-                type: prop.type,
-                default: prop.default,
-                description: prop.description,
-                choices: prop.enum || null,
-              })),
-            tags: data.tags || [],
-            shortcuts: data.shortcuts || [],
-            date_created: data.date_created,
-            date_modified: data.date_modified,
-          }
+          item = this.parseNonRsInfo(data)
         }
       } catch (e) {
         this.logger.warn(`获取模板 "${key}" 信息失败:`, e)
