@@ -124,10 +124,9 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       const shortcut = provider.findShortcut(keyOrKeyword, session)
       if (shortcut) {
         targetKey = shortcut.meme.key
-        const shortcutTextElements = shortcut.shortcutTexts.map(text => h.text(text))
         const argsString = shortcut.shortcutArgs.join(' ')
-        const shortcutArgElements = h.parse(argsString)
-        initialInput = [...shortcutTextElements, ...shortcutArgElements, ...initialInput]
+        const shortcutElements = h.parse(argsString)
+        initialInput = [...shortcutElements, ...initialInput]
       } else {
         const item = await provider.getInfo(keyOrKeyword, session)
         if (!item) return `模板 "${keyOrKeyword}" 不存在`
@@ -197,7 +196,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
         for (const arg of item.args) {
           let line = `  - ${arg.name} (${arg.type || 'any'})`
           const details: string[] = []
-          if (arg.default !== undefined && arg.default !== null) details.push(`[${JSON.stringify(arg.default).replace(/"/g, '')}]`)
+          if (arg.default !== undefined && arg.default !== null && arg.default !== '') details.push(`[${JSON.stringify(arg.default).replace(/"/g, '')}]`)
           if (arg.choices?.length) details.push(`[${arg.choices.join(',')}]`)
           let details_str = details.join(' ')
           if (details_str) line += ` ${details_str}`
@@ -209,14 +208,15 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
         output.push('快捷指令:')
         const shortcuts_list: string[] = []
         for (const sc of item.shortcuts) {
-          const displayName = sc.humanized || sc.pattern;
-          let shortcutInfo = displayName;
-
-          if (sc.options && Object.keys(sc.options).length > 0) {
-            const opts = Object.entries(sc.options).map(([k, v]) => `${k}=${v}`).join(',')
+          const key = sc.humanized || sc.pattern || (sc as any).key
+          let shortcutInfo = key
+          const options = (sc as any).options
+          if (options && Object.keys(options).length > 0) {
+            const opts = Object.entries(options).map(([k, v]) => `${k}=${v}`).join(',')
             shortcutInfo += `(${opts})`
-          } else if (sc.texts && sc.texts.length > 0) {
-            shortcutInfo += `(${sc.texts.join(' ')})`
+          } else {
+            const args = (sc as any).args
+            if (args && args.length > 0) shortcutInfo += `(${args.join(' ')})`
           }
           shortcuts_list.push(shortcutInfo)
         }
@@ -350,10 +350,9 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
 
       const shortcut = provider.findShortcut(word, session)
       if (shortcut) {
-        const shortcutTextsString = shortcut.shortcutTexts.join(' ')
         const shortcutArgsString = shortcut.shortcutArgs.join(' ')
         const userArgsString = args.join(' ')
-        return session.execute(`memes.make ${shortcut.meme.key} ${shortcutTextsString} ${shortcutArgsString} ${userArgsString}`)
+        return session.execute(`memes.make ${shortcut.meme.key} ${shortcutArgsString} ${userArgsString}`)
       }
       return next()
     }, true)
