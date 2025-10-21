@@ -21,7 +21,7 @@ export interface MemeOption {
   type: string
   default?: any
   description?: string | null
-  parser_flags?: ParserFlags
+  parser_flags?: ParserFlags | null
   choices?: (string | number)[] | null
 }
 
@@ -30,8 +30,10 @@ export interface MemeOption {
  * @description 定义了表情模板的快捷指令。
  */
 export interface MemeShortcut {
-  pattern: string
-  humanized?: string | null
+  pattern: string;
+  humanized?: string | null;
+  texts?: string[];
+  options?: Record<string, any>;
 }
 
 /**
@@ -111,6 +113,22 @@ export class MemeProvider {
    */
   private parseNonRsInfo(data: any): MemeInfo {
     const params = data.params_type;
+    const memeArgs: MemeOption[] = (params.args_type?.parser_options || [])
+      .flatMap(option => (option.args || []).map(arg => ({
+        name: arg.name,
+        type: 'string',
+        default: arg.default,
+        description: option.help_text || null,
+        choices: null,
+        parser_flags: null,
+      })))
+      .filter(Boolean);
+    const shortcuts: MemeShortcut[] = (data.shortcuts || []).map(sc => ({
+      pattern: sc.key,
+      humanized: sc.humanized || null,
+      texts: sc.args || [],
+      options: {},
+    }));
     return {
       key: data.key,
       keywords: data.keywords || [],
@@ -119,17 +137,9 @@ export class MemeProvider {
       minTexts: params.min_texts,
       maxTexts: params.max_texts,
       defaultTexts: params.default_texts || [],
-      args: Object.entries(params.args_type?.args_model?.properties || {})
-        .filter(([key]) => key !== 'user_infos')
-        .map(([key, prop]: [string, any]) => ({
-          name: key,
-          type: prop.type,
-          default: prop.default,
-          description: prop.description,
-          choices: prop.enum || null,
-        })),
+      args: memeArgs,
       tags: data.tags || [],
-      shortcuts: data.shortcuts || [],
+      shortcuts: shortcuts,
       date_created: data.date_created,
       date_modified: data.date_modified,
     };
@@ -223,35 +233,32 @@ export class MemeProvider {
    * @param session - 当前 Koishi 会话，用于检查黑名单。
    * @returns 如果找到，则返回包含模板信息和快捷指令参数的对象，否则返回 null。
    */
-  public findShortcut(word: string, session?: Session): { meme: MemeInfo, shortcutArgs: string[] } | null {
-    if (!this.config.cacheAllInfo) return null
-    const exclusionSet = this.getExclusionSet(session?.guildId)
+  public findShortcut(word: string, session?: Session): { meme: MemeInfo; shortcutArgs: string[]; shortcutTexts: string[] } | null {
+    if (!this.config.cacheAllInfo) return null;
+    const exclusionSet = this.getExclusionSet(session?.guildId);
 
     for (const meme of this.cache) {
-      if (exclusionSet.has(meme.key)) continue
-      if (!meme.shortcuts) continue
+      if (exclusionSet.has(meme.key)) continue;
+      if (!meme.shortcuts) continue;
       for (const sc of meme.shortcuts) {
-        const shortcutKey = sc.pattern || (sc as any).key
-        if (shortcutKey === word) {
-          const shortcutArgs: string[] = []
-          const options = (sc as any).options
-          if (options && typeof options === 'object') {
-            for (const [key, value] of Object.entries(options)) {
+        if (sc.pattern === word) {
+          const shortcutArgs: string[] = [];
+          const shortcutTexts: string[] = sc.texts || [];
+          if (sc.options && typeof sc.options === 'object') {
+            for (const [key, value] of Object.entries(sc.options)) {
               if (typeof value === 'boolean' && value === true) {
-                shortcutArgs.push(`--${key}`)
+                shortcutArgs.push(`--${key}`);
               } else {
-                const formattedValue = String(value).includes(' ') ? `"${value}"` : value
-                shortcutArgs.push(`--${key}=${formattedValue}`)
+                const formattedValue = String(value).includes(' ') ? `"${value}"` : value;
+                shortcutArgs.push(`--${key}=${formattedValue}`);
               }
             }
           }
-          const args = (sc as any).args
-          if (Array.isArray(args)) shortcutArgs.push(...args)
-          return { meme, shortcutArgs }
+          return { meme, shortcutArgs, shortcutTexts };
         }
       }
     }
-    return null
+    return null;
   }
 
   /**
@@ -496,8 +503,8 @@ export class MemeProvider {
       if (this.isRsApi) {
         const imgBuffers = await Promise.all(imgs.map((url) => this.ctx.http.get<ArrayBuffer>(url, { responseType: 'arraybuffer' })),)
         const imgIds = await Promise.all(imgBuffers.map((buf) => this.upload(Buffer.from(buf))))
-        const payload = { images: imgIds.map((id) => ({ id })), texts, options: args }
-        const endpoint = `${this.url}/memes/${key}`
+        const payload = { images: imgIds.map((id) => ({ name: session.username || session.userId, id })), texts, options: args }
+        const endpoint = `${this.url}/memes/${key}/make`
         if (this.config.debug) this.logger.info(`[REQUEST] POST ${endpoint} with payload: ${JSON.stringify(payload)}`)
         const res = await this.ctx.http.post<{ image_id: string }>(endpoint, payload, { timeout: 30000 })
         if (this.config.debug) this.logger.info(`[RESPONSE] image_id: ${res.image_id}`)
@@ -509,12 +516,8 @@ export class MemeProvider {
       } else {
         const form = new FormData()
         texts.forEach((t) => form.append('texts', t))
-        await Promise.all(
-          imgs.map(async (url) => {
-            const resp = await this.ctx.http.get<ArrayBuffer>(url, { responseType: 'arraybuffer' })
-            form.append('images', new Blob([resp]))
-          }),
-        )
+        const imageBuffers = await Promise.all(imgs.map(url => this.ctx.http.get<ArrayBuffer>(url, { responseType: 'arraybuffer' })))
+        imageBuffers.forEach(buffer => { form.append('images', new Blob([Buffer.from(buffer)])) })
         if (Object.keys(args).length) form.append('args', JSON.stringify(args))
         const endpoint = `${this.url}/memes/${key}/`
         if (this.config.debug) {
