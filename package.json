@@ -1,7 +1,7 @@
 {
   "name": "koishi-plugin-memes",
   "description": "MemeGenerator(RS)表情生成，全功能支持，可自由配置黑名单。",
-  "version": "2.0.10",
+  "version": "2.0.11",
   "contributors": [
     "Yis_Rime <yis_rime@outlook.com>"
   ],

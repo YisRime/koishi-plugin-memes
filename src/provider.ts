@@ -497,7 +497,7 @@ export class MemeProvider {
         const imgBuffers = await Promise.all(imgs.map((url) => this.ctx.http.get<ArrayBuffer>(url, { responseType: 'arraybuffer' })),)
         const imgIds = await Promise.all(imgBuffers.map((buf) => this.upload(Buffer.from(buf))))
         const payload = { images: imgIds.map((id) => ({ name: session.username || session.userId, id })), texts, options: args }
-        const endpoint = `${this.url}/memes/${key}/make`
+        const endpoint = `${this.url}/memes/${key}`
         if (this.config.debug) this.logger.info(`[REQUEST] POST ${endpoint} with payload: ${JSON.stringify(payload)}`)
         const res = await this.ctx.http.post<{ image_id: string }>(endpoint, payload, { timeout: 30000 })
         if (this.config.debug) this.logger.info(`[RESPONSE] Data: ${JSON.stringify(res)}`)
