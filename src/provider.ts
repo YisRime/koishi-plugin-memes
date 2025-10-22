@@ -420,20 +420,30 @@ export class MemeProvider {
     const item = await this.getInfo(key, session)
     if (!item) return `模板 "${key}" 不存在`
 
-    let imgs: string[] = []
+    const imgs: { url: string; name?: string }[] = []
     let texts: string[] = []
     const args: Record<string, any> = {}
 
     for (const el of input) {
-      if (el.type === 'img' && el.attrs.src) imgs.push(el.attrs.src)
-      else if (el.type === 'at' && el.attrs.id)
-        imgs.push(await getAvatar(session, el.attrs.id))
-      else if (el.type === 'text' && el.attrs.content) {
+      if (el.type === 'img' && el.attrs.src) {
+        imgs.push({ url: el.attrs.src })
+      } else if (el.type === 'at' && el.attrs.id) {
+        const avatarUrl = await getAvatar(session, el.attrs.id)
+        imgs.push({ url: avatarUrl })
+      } else if (el.type === 'text' && el.attrs.content) {
         el.attrs.content
           .trim()
           .split(/\s+/)
           .forEach((token) => {
             if (!token) return
+            const nameMatch = token.match(/^==(.+)$/)
+            if (nameMatch && imgs.length > 0) {
+              const lastImg = imgs[imgs.length - 1]
+              if (!lastImg.name) {
+                lastImg.name = nameMatch[1]
+                return
+              }
+            }
             const match = token.match(/^--([^=]+)(?:=(.*))?$/)
             if (match) {
               const key = match[1]
@@ -454,8 +464,7 @@ export class MemeProvider {
       }
     }
 
-    if (this.config.useUserAvatar && (item.minImages - imgs.length === 1)) imgs.unshift(await getAvatar(session))
-
+    if (this.config.useUserAvatar && (item.minImages - imgs.length === 1)) imgs.unshift({ url: await getAvatar(session) })
     if (this.config.fillDefaultText !== 'disable' && item.defaultTexts?.length > 0) {
       if (this.config.fillDefaultText === 'missing' && texts.length === 0) {
         texts = [...item.defaultTexts];
@@ -494,9 +503,10 @@ export class MemeProvider {
 
     try {
       if (this.isRsApi) {
-        const imgBuffers = await Promise.all(imgs.map((url) => this.ctx.http.get<ArrayBuffer>(url, { responseType: 'arraybuffer' })),)
+        const imgUrls = imgs.map(img => img.url)
+        const imgBuffers = await Promise.all(imgUrls.map((url) => this.ctx.http.get<ArrayBuffer>(url, { responseType: 'arraybuffer' })))
         const imgIds = await Promise.all(imgBuffers.map((buf) => this.upload(Buffer.from(buf))))
-        const payload = { images: imgIds.map((id) => ({ name: session.username || session.userId, id })), texts, options: args }
+        const payload = { images: imgIds.map((id, index) => ({ name: imgs[index].name || session.username || session.userId, id })), texts, options: args }
         const endpoint = `${this.url}/memes/${key}`
         if (this.config.debug) this.logger.info(`[REQUEST] POST ${endpoint} with payload: ${JSON.stringify(payload)}`)
         const res = await this.ctx.http.post<{ image_id: string }>(endpoint, payload, { timeout: 30000 })
@@ -509,7 +519,7 @@ export class MemeProvider {
       } else {
         const form = new FormData()
         texts.forEach((t) => form.append('texts', t))
-        const imageBuffers = await Promise.all(imgs.map(url => this.ctx.http.get<ArrayBuffer>(url, { responseType: 'arraybuffer' })))
+        const imageBuffers = await Promise.all(imgs.map(img => this.ctx.http.get<ArrayBuffer>(img.url, { responseType: 'arraybuffer' })))
         imageBuffers.forEach(buffer => { form.append('images', new Blob([buffer])) })
         if (Object.keys(args).length) form.append('args', JSON.stringify(args))
         const endpoint = `${this.url}/memes/${key}/`

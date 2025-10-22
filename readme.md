@@ -37,6 +37,14 @@
 | `fillDefaultText` | `'disable' \| 'insufficient' \| 'missing'` | `'missing'` | **自动补充默认文本的策略。** `disable`: 关闭； `missing`: 仅当用户未提供任何文本时补充； `insufficient`: 当用户提供的文本数量不足时补充。 |
 | `ignoreExcess` | `boolean` | `true` | 是否自动忽略用户提供的多余文本或图片参数。 |
 
+### 其它配置
+
+| 配置项 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `triggerMode` | `'disable' \| 'noprefix' \| 'prefix'` | `'disable'` | **关键词触发模式。** `disable`: 关闭； `noprefix`: 无需前缀直接触发； `prefix`: 需要匹配全局指令前缀触发。 |
+| `sendRandomInfo` | `boolean` | `true` | 使用 `memes.random` 命令时，是否额外发送所用模板的名称信息。 |
+| `blacklist` | `object[]` | `[]` | **表情禁用规则。** 可配置在指定群组 (`guildId`) 禁用特定模板 (`keyId`)。`guildId` 留空则为全局禁用。 |
+
 ### 菜单配置
 
 | 配置项 | 类型 | 默认值 | 说明 |
@@ -45,14 +53,6 @@
 | `listTextTemplate` | `string` | *(无)* | 自定义列表渲染时的文字模板。 |
 | `showListIcon` | `boolean` | `false` | 是否在渲染的列表图片中为模板添加分类图标。 |
 | `markAsNewDays` | `number` | `0` | 将最近 N 天内更新的模板标记为 "新"。设置为 0 则禁用。 |
-
-### 其它配置
-
-| 配置项 | 类型 | 默认值 | 说明 |
-| --- | --- | --- | --- |
-| `triggerMode` | `'disable' \| 'noprefix' \| 'prefix'` | `'disable'` | **关键词触发模式。** `disable`: 关闭； `noprefix`: 无需前缀直接触发； `prefix`: 需要匹配全局指令前缀触发。 |
-| `sendRandomInfo` | `boolean` | `true` | 使用 `memes.random` 命令时，是否额外发送所用模板的名称信息。 |
-| `blacklist` | `object[]` | `[]` | **表情禁用规则。** 可配置在指定群组 (`guildId`) 禁用特定模板 (`keyId`)。`guildId` 留空则为全局禁用。 |
 
 ## 📖 指令用法
 
@@ -116,6 +116,11 @@
   - **`@用户`**: 在指令中直接`@`某人，插件会自动获取其头像作为图片参数。
   - **发送图片**: 在发送指令的同时附带图片，或回复一条带图片的消息。
   - **自动补充**: 如果模板需要图片但未提供，插件会根据 `useUserAvatar` 配置自动使用发送者的头像。
+
+- **为图片指定名称 (仅限 RsAPI)**:
+  - 在图片参数后紧跟 `==名称` 即可为该图片指定一个特定的名字。这个名称可能会被某些需要展示用户名的模板使用。
+  - 如果不指定，则默认使用发送者的昵称。
+  - **示例**: `memes.make <模板> [图片1] ==张三 [图片2] ==李四`
 
 - **提供文本参数**:
   - 多个文本参数请用**空格**隔开。
