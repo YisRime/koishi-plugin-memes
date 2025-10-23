@@ -110,14 +110,14 @@ export class MemeProvider {
    * @returns 标准化的 MemeInfo 对象。
    */
   private parseNonRsInfo(data: any): MemeInfo {
-    const params = data.params_type;
+    const params = data.params_type || {};
     return {
       key: data.key,
       keywords: data.keywords || [],
-      minImages: params.min_images,
-      maxImages: params.max_images,
-      minTexts: params.min_texts,
-      maxTexts: params.max_texts,
+      minImages: params.min_images || 0,
+      maxImages: params.max_images || 0,
+      minTexts: params.min_texts || 0,
+      maxTexts: params.max_texts || 0,
       defaultTexts: params.default_texts || [],
       args: Object.entries(params.args_type?.args_model?.properties || {})
         .filter(([key]) => key !== 'user_infos')
