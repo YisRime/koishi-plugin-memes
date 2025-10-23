@@ -581,7 +581,7 @@ export class MemeProvider {
         return Buffer.from(buf)
       } else {
         const exclusionSet = this.getExclusionSet(session?.guildId)
-        const availableKeys = this.keys.filter(key => !exclusionSet.has(key));
+        const availableKeys = this.keys.filter(key => key && !exclusionSet.has(key));
         const payload: any = { meme_list: availableKeys.map((key) => ({ meme_key: key })) }
         if (this.config.listTextTemplate) payload.text_template = this.config.listTextTemplate
         if (this.config.showListIcon !== undefined && this.config.showListIcon !== null) payload.add_category_icon = this.config.showListIcon
