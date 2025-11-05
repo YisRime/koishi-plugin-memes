@@ -428,8 +428,9 @@ export class MemeProvider {
       if (el.type === 'img' && el.attrs.src) {
         imgs.push({ url: el.attrs.src })
       } else if (el.type === 'at' && el.attrs.id) {
-        const avatarUrl = await getAvatar(session, el.attrs.id)
-        imgs.push({ url: avatarUrl })
+        const user = await session.bot.getUser(el.attrs.id)
+        const avatarUrl = user.avatar || await getAvatar(session, el.attrs.id)
+        imgs.push({ url: avatarUrl, name: user.name || user.nick })
       } else if (el.type === 'text' && el.attrs.content) {
         el.attrs.content
           .trim()
@@ -464,7 +465,7 @@ export class MemeProvider {
       }
     }
 
-    if (this.config.useUserAvatar && (item.minImages - imgs.length === 1)) imgs.unshift({ url: await getAvatar(session) })
+    if (this.config.useUserAvatar && (item.minImages - imgs.length === 1)) imgs.unshift({ url: await getAvatar(session), name: session.username })
     if (this.config.fillDefaultText !== 'disable' && item.defaultTexts?.length > 0) {
       if (this.config.fillDefaultText === 'missing' && texts.length === 0) {
         texts = [...item.defaultTexts];
