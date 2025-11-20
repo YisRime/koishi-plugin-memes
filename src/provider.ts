@@ -95,13 +95,20 @@ export class MemeProvider {
    */
   async start(): Promise<{ version: string; count: number }> {
     const endpoint = `${this.url}/meme/version`
-    if (this.config.debug) this.logger.info(`[REQUEST] GET ${endpoint}`)
-    const versionRaw = await this.ctx.http.get<string>(endpoint, { responseType: 'text' })
-    if (this.config.debug) this.logger.info(`[RESPONSE] Data: ${versionRaw}`)
-    const version = versionRaw.replace(/"/g, '')
-    this.isRsApi = !version.startsWith('0.1.')
-    const count = await this.fetch()
-    return { version, count }
+    for (let i = 0; i <= 3; i++) {
+      try {
+        if (this.config.debug) this.logger.info(`[REQUEST] GET ${endpoint}`)
+        const versionRaw = await this.ctx.http.get<string>(endpoint, { responseType: 'text' })
+        if (this.config.debug) this.logger.info(`[RESPONSE] Data: ${versionRaw}`)
+        const version = versionRaw.replace(/"/g, '')
+        this.isRsApi = !version.startsWith('0.1.')
+        const count = await this.fetch()
+        return { version, count }
+      } catch (err) {
+        if (i === 3) throw err
+        await new Promise(resolve => setTimeout(resolve, 60000))
+      }
+    }
   }
 
   /**
@@ -232,7 +239,12 @@ export class MemeProvider {
       if (!meme.shortcuts) continue
       for (const sc of meme.shortcuts) {
         const shortcutKey = sc.pattern || (sc as any).key
-        if (shortcutKey === word) {
+        let match: RegExpMatchArray | null = null
+        try {
+          const jsPattern = shortcutKey.replace(/\(\?P</g, '(?<')
+          match = word.match(new RegExp(`^${jsPattern}$`))
+        } catch { /* ignore */ }
+        if (match) {
           const shortcutArgs: string[] = []
           const options = (sc as any).options
           if (options && typeof options === 'object') {
@@ -246,7 +258,15 @@ export class MemeProvider {
             }
           }
           const args = (sc as any).args
-          if (Array.isArray(args)) shortcutArgs.push(...args)
+          if (Array.isArray(args)) {
+            for (const arg of args) {
+              if (typeof arg === 'string') {
+                shortcutArgs.push(arg.replace(/\{(\w+)\}/g, (s, key) => match.groups?.[key] ?? s))
+              } else {
+                shortcutArgs.push(arg)
+              }
+            }
+          }
           return { meme, shortcutArgs }
         }
       }
