@@ -143,25 +143,30 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
           const combinedInput = [...initialInput, ...h.parse(response)]
           return provider.create(targetKey, combinedInput, session)
         }
+        return `生成失败: ${e.message}`
       }
     })
 
   cmd.subcommand('.random [params:elements]', '随机表情')
     .usage('随机选择一个模板并制作表情')
-    .action(async ({ session }, input) => {
-      const initialInput = input ?? []
+    .action(async ({ session }, input = []) => {
+      let imgCnt = 0, txtCnt = 0
+      for (const el of input) {
+        if (el.type === 'img' || (el.type === 'at' && el.attrs.id)) imgCnt++
+        else if (el.type === 'text') txtCnt += el.attrs.content.split(/\s+/).filter(t => t && !/^(?:--|==)/.test(t)).length
+      }
 
       for (let i = 0; i < 3; i++) {
-        const item = await provider.getRandom(session)
+        const item = await provider.getRandom(session, imgCnt, txtCnt)
         if (!item) return '无可用模板'
 
         try {
-          const result = await provider.create(item.key, initialInput, session)
+          const res = await provider.create(item.key, input, session)
           if (config.sendRandomInfo) await session.send(`模板名: ${item.keywords.join('/') || item.key} (${item.key})`)
-          return result
+          return res
         } catch (e) {
           ctx.logger.warn('表情随机失败:', e)
-          return `表情随机失败: ${e.message}`
+          if (i == 2) return `表情随机失败: ${e.message}`
         }
       }
     })

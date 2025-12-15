@@ -55,14 +55,14 @@ export interface MemeInfo {
 
 /**
  * 从用户会话中获取头像 URL。
- * 如果无法通过 bot API 获取，则回退到 QQ 的公开头像链接。
  * @param session - 当前 Koishi 会话对象。
  * @param userId - (可选) 目标用户 ID，默认为会话发起者。
  * @returns 返回一个包含头像 URL 的 Promise。
  */
 async function getAvatar(session: Session, userId?: string): Promise<string> {
-  const user = await session.bot.getUser(userId || session.userId)
-  if (user.avatar) return user.avatar
+  const targetId = userId || session.userId;
+  if (targetId === session.userId && session.author?.avatar) return session.author.avatar;
+  return session.bot?.getUser?.(targetId).then(u => u?.avatar).catch(() => null) || '';
 }
 
 /**
@@ -380,27 +380,29 @@ export class MemeProvider {
 
   /**
    * 随机获取一个模板信息。
-   * - 缓存模式下：从内存中随机选择。
-   * - 非缓存模式下：随机选择一个 key 再通过网络请求获取。
-   * @param session - 当前 Koishi 会话，用于过滤黑名单。
+   * @param session - 当前 Koishi 会话。
+   * @param inputImages - 输入的有效图片数量（可选）。
+   * @param inputTexts - 输入的有效文本数量（可选）。
    * @returns 返回找到的 MemeInfo 对象，如果找不到则返回 null。
    */
-  async getRandom(session?: Session): Promise<MemeInfo | null> {
-    const exclusionSet = this.getExclusionSet(session?.guildId)
+  async getRandom(session?: Session, imgCnt = 0, txtCnt = 0): Promise<MemeInfo | null> {
+    const banned = this.getExclusionSet(session?.guildId)
 
     if (this.config.cacheAllInfo) {
-      if (!this.cache.length) return null
-      const available = this.cache.filter(item => !exclusionSet.has(item.key))
-      if (!available.length) return null
-      const randomIndex = Math.floor(Math.random() * available.length)
-      return available[randomIndex]
+      const { useUserAvatar, fillDefaultText } = this.config
+      const candidates = this.cache.filter(m => {
+        if (banned.has(m.key)) return false
+        const imgOk = imgCnt >= m.minImages || (useUserAvatar && m.minImages - imgCnt === 1)
+        if (!imgOk) return false
+        const canFill = fillDefaultText !== 'disable' && m.defaultTexts.length > 0
+        const txtOk = txtCnt >= m.minTexts || (canFill && (fillDefaultText === 'insufficient' || txtCnt === 0))
+        return txtOk
+      })
+      return candidates.length ? candidates[Math.floor(Math.random() * candidates.length)] : null
     }
 
-    if (!this.keys.length) return null
-    const available = this.keys.filter(key => !exclusionSet.has(key))
-    if (!available.length) return null
-    const randomKey = available[Math.floor(Math.random() * available.length)]
-    return this.getInfo(randomKey, session)
+    const keys = this.keys.filter(k => !banned.has(k))
+    return keys.length ? this.getInfo(keys[Math.floor(Math.random() * keys.length)], session) : null
   }
 
   /**
@@ -436,7 +438,7 @@ export class MemeProvider {
    * @returns 返回一个包含生成图片的 h 元素，或在失败时返回错误信息的字符串。
    * @throws {Error} 当参数不足时，抛出名为 'MissError' 的错误。
    */
-  async create(key: string, input: h[], session: Session,): Promise<h | string> {
+  async create(key: string, input: h[], session: Session): Promise<h | string> {
     const item = await this.getInfo(key, session)
     if (!item) return `模板 "${key}" 不存在`
 
@@ -448,67 +450,49 @@ export class MemeProvider {
       if (el.type === 'img' && el.attrs.src) {
         imgs.push({ url: el.attrs.src })
       } else if (el.type === 'at' && el.attrs.id) {
-        const user = await session.bot.getUser(el.attrs.id)
-        const avatarUrl = user.avatar || await getAvatar(session, el.attrs.id)
-        imgs.push({ url: avatarUrl, name: user.name || user.nick })
+        const user = await session.bot.getUser?.(el.attrs.id).catch(() => null)
+        const name = user?.nick || user?.name || user?.username
+        const avatarUrl = user?.avatar || await getAvatar(session, el.attrs.id)
+        if (avatarUrl) imgs.push({ url: avatarUrl, name })
       } else if (el.type === 'text' && el.attrs.content) {
-        el.attrs.content
-          .trim()
-          .split(/\s+/)
-          .forEach((token) => {
-            if (!token) return
-            const nameMatch = token.match(/^==(.+)$/)
-            if (nameMatch && imgs.length > 0) {
-              const lastImg = imgs[imgs.length - 1]
-              if (!lastImg.name) {
-                lastImg.name = nameMatch[1]
-                return
-              }
-            }
-            const match = token.match(/^--([^=]+)(?:=(.*))?$/)
-            if (match) {
-              const key = match[1]
-              const value = match[2]
-              if (value !== undefined) {
-                if (value.trim() !== '' && !isNaN(Number(value))) {
-                  args[key] = Number(value)
-                } else {
-                  args[key] = value
-                }
-              } else {
-                args[key] = true
-              }
-            } else {
-              texts.push(token)
-            }
-          })
+        el.attrs.content.trim().split(/\s+/).forEach((token) => {
+          if (!token) return
+          const nameMatch = token.match(/^==(.+)$/)
+          if (nameMatch && imgs.length > 0) {
+            const lastImg = imgs[imgs.length - 1]
+            if (!lastImg.name) { lastImg.name = nameMatch[1]; return }
+          }
+          const match = token.match(/^--([^=]+)(?:=(.*))?$/)
+          if (match) {
+            const k = match[1]; const v = match[2]
+            args[k] = (v !== undefined) ? (v.trim() !== '' && !isNaN(Number(v)) ? Number(v) : v) : true
+          } else {
+            texts.push(token)
+          }
+        })
       }
     }
 
-    if (this.config.useUserAvatar && (item.minImages - imgs.length === 1)) imgs.unshift({ url: await getAvatar(session), name: session.username })
+    if (this.config.useUserAvatar && (item.minImages - imgs.length === 1)) {
+        const selfAvatar = await getAvatar(session);
+        if (selfAvatar) imgs.unshift({ url: selfAvatar, name: session.username })
+    }
+
     if (this.config.fillDefaultText !== 'disable' && item.defaultTexts?.length > 0) {
       if (this.config.fillDefaultText === 'missing' && texts.length === 0) {
         texts = [...item.defaultTexts];
       } else if (this.config.fillDefaultText === 'insufficient' && texts.length < item.minTexts) {
         const needed = item.minTexts - texts.length;
-        const availableDefaults = item.defaultTexts.slice(texts.length);
-        texts.push(...availableDefaults.slice(0, needed));
+        texts.push(...item.defaultTexts.slice(texts.length, texts.length + needed));
       }
     }
 
-    if (imgs.length > item.maxImages) {
-      if (this.config.ignoreExcess) {
-        imgs.splice(item.maxImages)
-      } else {
-        return `当前共有 ${imgs.length}/${item.maxImages} 张图片，请删除多余参数`
-      }
-    }
-    if (texts.length > item.maxTexts) {
-      if (this.config.ignoreExcess) {
-        texts.splice(item.maxTexts)
-      } else {
-        return `当前共有 ${texts.length}/${item.maxTexts} 条文本，请删除多余参数`
-      }
+    if (this.config.ignoreExcess) {
+        if (imgs.length > item.maxImages) imgs.splice(item.maxImages)
+        if (texts.length > item.maxTexts) texts.splice(item.maxTexts)
+    } else {
+        if (imgs.length > item.maxImages) return `当前共有 ${imgs.length}/${item.maxImages} 张图片`
+        if (texts.length > item.maxTexts) return `当前共有 ${texts.length}/${item.maxTexts} 条文本`
     }
 
     if (imgs.length < item.minImages) {
@@ -554,7 +538,9 @@ export class MemeProvider {
       }
     } catch (e) {
       this.logger.warn(`图片生成失败 (${item.key}):`, e)
-      return `图片生成失败: ${e.message}`
+      let data = e.response?.data
+      try { if (typeof data === 'string') data = JSON.parse(data) } catch {}
+      return `图片生成失败: ${data?.detail || e.message}`
     }
   }
 
@@ -602,8 +588,8 @@ export class MemeProvider {
         return Buffer.from(buf)
       } else {
         const exclusionSet = this.getExclusionSet(session?.guildId)
-        const availableKeys = this.keys.filter(key => key && !exclusionSet.has(key));
-        const payload: any = { meme_list: availableKeys.map((key) => ({ meme_key: key })) }
+        const available = this.keys.filter(key => key && !exclusionSet.has(key));
+        const payload: any = { meme_list: available.map((key) => ({ meme_key: key })) }
         if (this.config.listTextTemplate) payload.text_template = this.config.listTextTemplate
         if (this.config.showListIcon !== undefined && this.config.showListIcon !== null) payload.add_category_icon = this.config.showListIcon
 
